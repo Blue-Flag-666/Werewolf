@@ -1,0 +1,36 @@
+{
+  "name": "werewolf-table",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:worker": "wrangler dev --ip 127.0.0.1 --port 8787",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc --noEmit && vite build",
+    "deploy": "pnpm build && wrangler deploy",
+    "test:integration": "node tests/run.mjs integration",
+    "test:browser": "node tests/run.mjs browser",
+    "deploy:check": "wrangler deploy --dry-run"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260910.1",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "playwright": "^1.63.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.30.0"
+  },
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

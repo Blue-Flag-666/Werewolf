@@ -1,0 +1,11 @@
+{
+  "name": "月隐 · 狼人杀法官助手",
+  "short_name": "月隐",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f4ee",
+  "theme_color": "#225f4d",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
