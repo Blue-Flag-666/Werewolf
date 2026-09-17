@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { Replay } from './Replay';
 import { Setup } from './Setup';
 import { Table, type GameView } from './Table';
-import { type Game, type Role, type Rules, ROLES } from './core/model';
+import { type Game, type Role, type Rules, ROLES, factionLabel } from './core/model';
 import { createGame } from './core/rules';
 import { applyCommand } from './core/engine';
 import { exportReplay } from './core/views';
@@ -30,8 +30,39 @@ interface RoomView {
   archives: { id: string; conclusion?: Game['conclusion'] }[];
   judgeOffer?: unknown;
 }
+type Screen = 'home' | 'play' | 'setup' | 'replay';
+type PrivateNotes = { text: string; marks: Record<string, string> };
+function PrivateNotesContent({
+  notes,
+  players,
+}: {
+  notes: PrivateNotes;
+  players: { id: string; seat: number; name: string }[];
+}) {
+  const playerNotes = players.filter((player) => notes.marks[player.id]?.trim());
+  if (!notes.text.trim() && !playerNotes.length) return <p className="muted">没有附加笔记</p>;
+  return (
+    <div className="note-content">
+      {notes.text.trim() && (
+        <section>
+          <h4>主笔记</h4>
+          <pre>{notes.text}</pre>
+        </section>
+      )}
+      {playerNotes.map((player) => (
+        <section key={player.id}>
+          <h4>
+            {player.seat} 号 · {player.name}
+          </h4>
+          <pre>{notes.marks[player.id]}</pre>
+        </section>
+      ))}
+    </div>
+  );
+}
 function App() {
   const [mode, setMode] = useState('home'),
+    [screen, setScreen] = useState<Screen>('home'),
     [game, setGame] = useState<Game>(),
     [archives, setArchives] = useState<Game[]>([]),
     [session, setSession] = useState<Session | undefined>(() => {
@@ -54,8 +85,10 @@ function App() {
     [subcode, setSubcode] = useState(''),
     [notes, setNotes] = useState(''),
     [marks, setMarks] = useState<Record<string, string>>({}),
+    [noteTarget, setNoteTarget] = useState('main'),
     [noteState, setNoteState] = useState(''),
     [view, setView] = useState('public'),
+    [replayId, setReplayId] = useState(''),
     [replayData, setReplayData] = useState<unknown>(),
     [replayNotes, setReplayNotes] = useState<{ text: string; marks: Record<string, string> }>({
       text: '',
@@ -69,6 +102,8 @@ function App() {
     (v) => {
       const state = v as RoomView;
       setRoom({ ...state, clockOffset: state.serverNow - Date.now() });
+      if (state.game && state.game.phase !== 'ended')
+        setScreen((current) => (current === 'setup' ? 'play' : current));
     },
     setError,
   );
@@ -98,6 +133,7 @@ function App() {
     readLocal<{ text: string; marks: Record<string, string> }>(noteKey).then((n) => {
       setNotes(n?.text ?? '');
       setMarks(n?.marks ?? {});
+      setNoteTarget('main');
       setNoteState('已读取本机笔记');
     });
   }, [noteKey]);
@@ -115,6 +151,31 @@ function App() {
       setNoteState('保存失败，请复制笔记');
     }
   }
+  async function saveArchive(finished: Game) {
+    const next = [...archives.filter((saved) => saved.id !== finished.id), finished].slice(-10);
+    await writeLocal('archives', next);
+    setArchives(next);
+  }
+  async function openLocalReplay(finished: Game) {
+    const data = exportReplay(finished, { judge: true }, 'judge');
+    const loadedNotes = await readLocal<{ text: string; marks: Record<string, string> }>(
+      'notes:' + finished.id + ':judge',
+    );
+    setMode('local');
+    setScreen('replay');
+    setView('judge');
+    setRound('');
+    setReplayId(finished.id);
+    setReplayData(data);
+    setReplayNotes(loadedNotes ?? { text: '', marks: {} });
+    setIncludeNotes(false);
+  }
+  function goHome() {
+    setMode('home');
+    setScreen('home');
+    setShield(true);
+    setReplayData(undefined);
+  }
   async function startLocal(roles: Role[], rules: Rules) {
     try {
       const next = createGame(
@@ -123,9 +184,7 @@ function App() {
         rules,
       );
       if (game?.phase === 'ended') {
-        const a = [...archives, game].slice(-10);
-        await writeLocal('archives', a);
-        setArchives(a);
+        await saveArchive(game);
       }
       await writeLocal('active', next);
       setGame(next);
@@ -133,6 +192,7 @@ function App() {
       setReveal(false);
       setShield(false);
       setMode('local');
+      setScreen('play');
     } catch (e) {
       setError((e as Error).message);
     }
@@ -156,6 +216,10 @@ function App() {
       );
       await writeLocal('active', next);
       setGame(next);
+      if (next.phase === 'ended') {
+        await saveArchive(next);
+        await openLocalReplay(next);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -179,13 +243,14 @@ function App() {
       localStorage.setItem('room-session', JSON.stringify(data));
       setSession(data);
       setMode('online');
+      setScreen('play');
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
-  async function loadReplay(id = current?.id) {
+  async function loadReplay(id = current?.id, perspective = view) {
     if (!id) return;
     try {
       let data: unknown;
@@ -195,7 +260,7 @@ function App() {
         const end = round
           ? Math.max(0, ...g.events.filter((e) => e.round <= Number(round)).map((e) => e.seq))
           : Infinity;
-        data = exportReplay(g, { judge: true }, view, end);
+        data = exportReplay(g, { judge: true }, perspective, end);
       } else {
         if (!session) return;
         const res = await fetch(
@@ -204,7 +269,7 @@ function App() {
             '/replay?game=' +
             encodeURIComponent(id) +
             '&view=' +
-            encodeURIComponent(view) +
+            encodeURIComponent(perspective) +
             (round ? '&round=' + encodeURIComponent(round) : ''),
           { headers: { Authorization: 'Bearer ' + session.token } },
         );
@@ -216,11 +281,18 @@ function App() {
       );
       setReplayNotes(loadedNotes ?? { text: '', marks: {} });
       setIncludeNotes(false);
+      setReplayId(id);
       setReplayData(data);
     } catch (e) {
       setError((e as Error).message);
     }
   }
+  useEffect(() => {
+    if (mode !== 'online' || screen !== 'play' || room?.game?.phase !== 'ended') return;
+    setView('public');
+    setRound('');
+    void loadReplay(room.game.id, 'public').then(() => setScreen('replay'));
+  }, [mode, screen, room?.game?.id, room?.game?.phase]);
   useEffect(() => {
     if (mode !== 'local' || !game?.interrupt) return;
     const timer = game.interrupt.targetTimer;
@@ -234,6 +306,18 @@ function App() {
     return () => clearTimeout(id);
   }, [mode, game?.version]);
   const judge = mode === 'local' || !!room?.judge;
+  const localReplays =
+    game?.phase === 'ended' && !archives.some((saved) => saved.id === game.id)
+      ? [...archives, game]
+      : archives;
+  const replayGame =
+    mode === 'local'
+      ? game?.id === replayId
+        ? game
+        : archives.find((saved) => saved.id === replayId)
+      : current?.id === replayId
+        ? current
+        : undefined;
   return (
     <>
       <header>
@@ -242,8 +326,7 @@ function App() {
           href="#"
           onClick={(e) => {
             e.preventDefault();
-            setMode('home');
-            setShield(true);
+            goHome();
           }}
         >
           ◒{' '}
@@ -252,18 +335,43 @@ function App() {
           </span>
         </a>
         <nav>
-          <span className="connection">
-            {mode === 'local'
-              ? '离线法官模式'
-              : mode === 'online'
-                ? connection.status
-                : '真人狼人杀助手'}
-          </span>
-          <select aria-label="主题" value={theme} onChange={(e) => setTheme(e.target.value)}>
-            <option value="system">跟随系统</option>
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
-          </select>
+          {mode !== 'home' && (
+            <span className="connection">
+              {mode === 'local' ? '离线法官模式' : connection.status}
+            </span>
+          )}
+          <div className="theme-switcher" role="group" aria-label="主题切换">
+            <button
+              type="button"
+              className={theme === 'light' ? 'selected' : ''}
+              aria-label="浅色主题"
+              aria-pressed={theme === 'light'}
+              title="浅色主题"
+              onClick={() => setTheme('light')}
+            >
+              <span aria-hidden="true">☀</span>
+            </button>
+            <button
+              type="button"
+              className={theme === 'dark' ? 'selected' : ''}
+              aria-label="深色主题"
+              aria-pressed={theme === 'dark'}
+              title="深色主题"
+              onClick={() => setTheme('dark')}
+            >
+              <span aria-hidden="true">☾</span>
+            </button>
+            <button
+              type="button"
+              className={`auto ${theme === 'system' ? 'selected' : ''}`}
+              aria-label="跟随系统主题"
+              aria-pressed={theme === 'system'}
+              title="跟随系统主题"
+              onClick={() => setTheme('system')}
+            >
+              <span aria-hidden="true">AUTO</span>
+            </button>
+          </div>
         </nav>
       </header>
       <main>
@@ -277,27 +385,31 @@ function App() {
         {mode === 'home' && (
           <>
             <section className="hero">
-              <span className="eyebrow">让每一局，都有条不紊</span>
-              <h1>
-                天黑，请闭眼。
-                <br />
-                <em>余下的，交给月隐。</em>
-              </h1>
-              <p>
-                为真人狼人杀而设计的法官助手。角色行动、发言、投票和复盘，在同一张桌上清晰流转。
-              </p>
+              <h1>专为面杀设计的狼人杀辅助平台</h1>
               <div className="actions">
                 <button
                   className="primary"
                   onClick={() => {
-                    setMode('local');
-                    setShield(true);
+                    if (game?.phase === 'ended') void openLocalReplay(game);
+                    else {
+                      setMode('local');
+                      setScreen(game ? 'play' : 'setup');
+                      setShield(true);
+                    }
                   }}
                 >
-                  ◈ 单机法官{game ? ' · 恢复本局' : ''}
+                  ◈ 单机法官
+                  {game?.phase === 'ended' ? ' · 查看本局复盘' : game ? ' · 恢复本局' : ''}
                 </button>
                 {session && (
-                  <button onClick={() => setMode('online')}>恢复联机房间 {session.code}</button>
+                  <button
+                    onClick={() => {
+                      setMode('online');
+                      setScreen('play');
+                    }}
+                  >
+                    恢复联机房间 {session.code}
+                  </button>
                 )}
               </div>
             </section>
@@ -357,18 +469,51 @@ function App() {
                 </ul>
                 <button
                   onClick={() => {
-                    setMode('local');
-                    setShield(true);
+                    if (game?.phase === 'ended') void openLocalReplay(game);
+                    else {
+                      setMode('local');
+                      setScreen(game ? 'play' : 'setup');
+                      setShield(true);
+                    }
                   }}
                 >
-                  进入单机模式 →
+                  {game?.phase === 'ended' ? '查看本局复盘 →' : '进入单机模式 →'}
                 </button>
               </section>
             </div>
+            <section className="panel">
+              <div className="section-heading">
+                <div>
+                  <span className="eyebrow">REPLAYS</span>
+                  <h2>复盘记录</h2>
+                </div>
+                <small>本机保存 {localReplays.length} 局</small>
+              </div>
+              {localReplays.length ? (
+                <div className="members">
+                  {[...localReplays].reverse().map((saved) => (
+                    <div key={saved.id}>
+                      <strong>
+                        {saved.conclusion?.factions
+                          .map((f) => factionLabel(f, saved.rules))
+                          .join('、') || '已结束'}{' '}
+                        · {saved.players.length} 人局
+                      </strong>
+                      <small>
+                        {saved.conclusion?.reason || '法官人工结束'} · {saved.id.slice(0, 8)}
+                      </small>
+                      <button onClick={() => void openLocalReplay(saved)}>查看复盘</button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">结束一局后，复盘会保存在这里。</p>
+              )}
+            </section>
           </>
         )}
-        {mode === 'local' && !game && <Setup onStart={startLocal} />}
-        {mode === 'local' && game && shield && (
+        {mode === 'local' && screen === 'setup' && <Setup onStart={startLocal} />}
+        {mode === 'local' && screen === 'play' && game && shield && (
           <section className="panel privacy">
             <span className="eyebrow">PRIVATE TABLE</span>
             <h1>身份已遮挡</h1>
@@ -378,7 +523,7 @@ function App() {
             </button>
           </section>
         )}
-        {mode === 'local' && game && !shield && game.phase === 'identity' && (
+        {mode === 'local' && screen === 'play' && game && !shield && game.phase === 'identity' && (
           <section className="panel privacy">
             <span className="eyebrow">
               逐一发牌 · {card + 1} / {game.players.length}
@@ -408,7 +553,7 @@ function App() {
             )}
           </section>
         )}
-        {mode === 'online' && room && (
+        {mode === 'online' && room && (screen === 'play' || screen === 'setup') && (
           <section className="panel">
             {room.paused && (
               <div className="error">
@@ -483,7 +628,7 @@ function App() {
               <button
                 onClick={() => {
                   connection.send('leave');
-                  setMode('home');
+                  goHome();
                 }}
               >
                 离开房间
@@ -526,18 +671,24 @@ function App() {
             </details>
           </section>
         )}
-        {mode === 'online' && room?.judge && (!room.game || room.game.phase === 'ended') && (
-          <>
-            <Setup
-              label="保存联机版型"
-              onStart={(roles, rules) => connection.send('configure', { roles, rules })}
-            />
-            <button className="primary" onClick={() => connection.send('start')}>
-              座位就绪，随机发牌开始本局
-            </button>
-          </>
-        )}
-        {current &&
+        {mode === 'online' &&
+          room?.judge &&
+          (screen === 'setup' || !room.game) &&
+          (!room.game || room.game.phase === 'ended') && (
+            <>
+              <Setup
+                label={room.game?.phase === 'ended' ? '保存下一局版型' : '保存联机版型'}
+                onStart={(roles, rules) => connection.send('configure', { roles, rules })}
+              />
+              <button className="primary" onClick={() => connection.send('start')}>
+                {room.game?.phase === 'ended'
+                  ? '座位就绪，随机发牌开始下一局'
+                  : '座位就绪，随机发牌开始本局'}
+              </button>
+            </>
+          )}
+        {screen === 'play' &&
+          current &&
           (mode === 'online' || (mode === 'local' && !shield && game?.phase !== 'identity')) && (
             <>
               <div className="toolbar">
@@ -566,40 +717,46 @@ function App() {
               <section className="panel">
                 <h2>我的私人笔记</h2>
                 <small>{noteState} · 不发送给法官、玩家或代打者</small>
-                <textarea
-                  rows={6}
-                  value={notes}
-                  maxLength={20000}
-                  placeholder="记录发言、身份猜测与票型"
-                  onChange={(e) => saveNotes(e.target.value)}
-                />
-                <div className="marks">
-                  {current.players.map((p) => (
-                    <label key={p.id}>
-                      {p.seat} 号
-                      <input
-                        value={marks[p.id] ?? ''}
-                        maxLength={80}
-                        placeholder="身份猜测 / 可疑程度"
-                        onChange={(e) => saveNotes(notes, { ...marks, [p.id]: e.target.value })}
-                      />
-                    </label>
+                <div className="note-tabs" role="group" aria-label="笔记对象">
+                  <button
+                    className={noteTarget === 'main' ? 'selected' : ''}
+                    aria-pressed={noteTarget === 'main'}
+                    onClick={() => setNoteTarget('main')}
+                  >
+                    主笔记
+                  </button>
+                  {current.players.map((player) => (
+                    <button
+                      key={player.id}
+                      className={noteTarget === player.id ? 'selected' : ''}
+                      aria-pressed={noteTarget === player.id}
+                      title={player.name}
+                      onClick={() => setNoteTarget(player.id)}
+                    >
+                      {player.seat} 号
+                    </button>
                   ))}
                 </div>
-                <details>
-                  <summary>笔记预览</summary>
-                  <div className="markdown">
-                    {notes
-                      .split('\n')
-                      .map((line, i) =>
-                        line.startsWith('# ') ? (
-                          <h3 key={i}>{line.slice(2)}</h3>
-                        ) : (
-                          <p key={i}>{line.startsWith('- ') ? '• ' + line.slice(2) : line}</p>
-                        ),
-                      )}
-                  </div>
-                </details>
+                <textarea
+                  rows={8}
+                  aria-label={
+                    noteTarget === 'main'
+                      ? '主笔记'
+                      : `${current.players.find((player) => player.id === noteTarget)?.seat ?? ''} 号玩家笔记`
+                  }
+                  value={noteTarget === 'main' ? notes : (marks[noteTarget] ?? '')}
+                  maxLength={noteTarget === 'main' ? 20000 : 5000}
+                  placeholder={
+                    noteTarget === 'main'
+                      ? '记录整局信息、发言顺序和整体判断'
+                      : '记录这名玩家的发言、身份猜测和可疑点'
+                  }
+                  onChange={(e) =>
+                    noteTarget === 'main'
+                      ? saveNotes(e.target.value)
+                      : saveNotes(notes, { ...marks, [noteTarget]: e.target.value })
+                  }
+                />
               </section>
               <details className="panel">
                 <summary>复盘与 JSON 导出</summary>
@@ -663,22 +820,107 @@ function App() {
                     {includeNotes && (
                       <div className="notice">
                         <h3>我在这一局的笔记</h3>
-                        <pre>{replayNotes.text}</pre>
-                        <pre>{JSON.stringify(replayNotes.marks, null, 2)}</pre>
+                        <PrivateNotesContent notes={replayNotes} players={current.players} />
                       </div>
                     )}
                   </>
                 )}
               </details>
-              {mode === 'local' && game?.phase === 'ended' && (
-                <Setup onStart={startLocal} label="开始下一局（保存本局复盘）" />
-              )}
             </>
           )}
+        {screen === 'replay' && replayData != null && (
+          <>
+            <section className="panel">
+              <div className="section-heading">
+                <div>
+                  <span className="eyebrow">GAME REVIEW</span>
+                  <h1>本局复盘</h1>
+                </div>
+                <div className="actions">
+                  <button onClick={goHome}>返回主页</button>
+                  {(mode === 'local' || room?.judge) && (
+                    <button
+                      className="primary"
+                      onClick={() => {
+                        setReplayData(undefined);
+                        setScreen('setup');
+                        setShield(false);
+                      }}
+                    >
+                      再来一局
+                    </button>
+                  )}
+                  {mode === 'online' && !room?.judge && (
+                    <button onClick={() => setScreen('setup')}>返回房间</button>
+                  )}
+                </div>
+              </div>
+              <div className="actions">
+                <select
+                  aria-label="复盘视角"
+                  value={view}
+                  onChange={(e) => setView(e.target.value)}
+                >
+                  <option value="public">公共视角</option>
+                  {(judge || replayGame?.phase === 'ended') && (
+                    <option value="judge">法官全知视角</option>
+                  )}
+                  {replayGame?.players.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.seat} 号当时视角
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="截至回合（空为完整）"
+                  value={round}
+                  onChange={(e) => setRound(e.target.value)}
+                />
+                <button onClick={() => loadReplay(replayId, view)}>按所选视角加载</button>
+                <button
+                  onClick={() =>
+                    download(
+                      'werewolf-' +
+                        (replayData as { game: string }).game +
+                        '-' +
+                        (replayData as { perspective: string }).perspective +
+                        '.json',
+                      includeNotes ? { replay: replayData, privateNotes: replayNotes } : replayData,
+                    )
+                  }
+                >
+                  导出复盘
+                </button>
+              </div>
+              {mode === 'online' &&
+                room?.archives.map((saved) => (
+                  <button key={saved.id} onClick={() => loadReplay(saved.id, view)}>
+                    查看上一局 {saved.id.slice(0, 6)}
+                  </button>
+                ))}
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={includeNotes}
+                  onChange={(e) => setIncludeNotes(e.target.checked)}
+                />
+                导出时附加我的本机私人笔记
+              </label>
+            </section>
+            <section className="panel">
+              <Replay data={replayData} />
+              {includeNotes && (
+                <div className="notice">
+                  <h3>我在这一局的笔记</h3>
+                  <PrivateNotesContent notes={replayNotes} players={replayGame?.players ?? []} />
+                </div>
+              )}
+            </section>
+          </>
+        )}
       </main>
-      <footer>
-        月隐 · 真人相聚，认真游戏。<span>公开信息与隐藏身份，分别守护。</span>
-      </footer>
     </>
   );
 }

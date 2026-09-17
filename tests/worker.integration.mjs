@@ -131,8 +131,7 @@ try {
   await command(wolf, 'submitAction', { pass: true });
   await judge.refresh();
   assert.equal(judge.state.game.night.knife, undefined);
-  await command(judge, 'submitAction', { actor: wolfId, pass: true });
-  await command(judge, 'confirmAction');
+  await command(judge, 'confirmAction', { pass: true });
   await command(judge, 'nextRole');
   await command(judge, 'settleNight');
   await command(judge, 'announce');

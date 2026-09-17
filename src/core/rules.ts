@@ -9,6 +9,8 @@ import {
   type Phase,
   type Death,
   defaultRules,
+  factionLabel,
+  ROLES,
   secureRandom,
   wolfRole,
   makeTimer,
@@ -113,7 +115,12 @@ export function createGame(
     '安全随机发牌完成',
     { roles: players.map((p) => ({ id: p.id, role: p.role, faction: p.faction })) },
     '身份已分配，请依次确认',
-    Object.fromEntries(players.map((p) => [p.id, `你的身份：${p.role}；阵营：${p.faction}`])),
+    Object.fromEntries(
+      players.map((p) => [
+        p.id,
+        `你的身份：${ROLES[p.role]}；阵营：${factionLabel(p.faction, rules)}`,
+      ]),
+    ),
   );
   return g;
 }

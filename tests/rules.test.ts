@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { type Game, type Role, defaultRules } from '../src/core/model';
+import { type Actor, type Game, type Role, defaultRules } from '../src/core/model';
 import { createGame, kill, checkVictory, settleNight, speechOrder } from '../src/core/rules';
 import { applyCommand } from '../src/core/engine';
 import { project, exportReplay } from '../src/core/views';
@@ -19,7 +19,7 @@ function cmd(
   g: Game,
   type: string,
   payload: Record<string, unknown> = {},
-  who = { judge: true },
+  who: Actor = { judge: true },
   now = 2000,
 ) {
   return applyCommand(
@@ -59,6 +59,35 @@ describe('发牌、权限与确认', () => {
     expect(g.night.guard).toBe('p3');
     expect(g.night.awaitingNext).toBe(true);
     expect(() => cmd(g, 'submitAction', { actor: 'p0', target: 'p3' })).toThrow();
+  });
+  it('狼人分别确认目标，一致后可采用，法官也可直接裁定整体刀口', () => {
+    const begin = () => {
+      let state = game(['wolf', 'whiteWolf', 'villager', 'seer']);
+      for (const p of state.players) state = cmd(state, 'identity', { actor: p.id });
+      state = cmd(state, 'startNight');
+      return cmd(state, 'nextRole');
+    };
+    let g = begin();
+    const wolves = g.players.filter((p) => p.faction === 'wolves');
+    const targets = g.players.filter((p) => p.faction === 'good');
+    g = cmd(g, 'submitAction', { target: targets[0].id }, { judge: false, player: wolves[0].id });
+    g = cmd(g, 'submitAction', { target: targets[1].id }, { judge: false, player: wolves[1].id });
+    expect(project(g, { judge: false, player: wolves[0].id }).wolfVotes).toEqual(g.night.wolfVotes);
+    expect(project(g, { judge: false, player: targets[0].id }).wolfVotes).toBeUndefined();
+    expect(() => cmd(g, 'confirmAction')).toThrow('意见尚未一致');
+    g = cmd(g, 'submitAction', { target: targets[0].id }, { judge: false, player: wolves[1].id });
+    g = cmd(g, 'confirmAction');
+    expect(g.night.knife).toBe(targets[0].id);
+
+    let decided = begin();
+    const finalTarget = decided.players.find((p) => p.faction === 'good')!;
+    decided = cmd(decided, 'confirmAction', { target: finalTarget.id });
+    expect(decided.night.knife).toBe(finalTarget.id);
+
+    let empty = begin();
+    empty = cmd(empty, 'confirmAction', { pass: true });
+    expect(empty.night.knife).toBeUndefined();
+    expect(empty.night.awaitingNext).toBe(true);
   });
   it('重复命令幂等，过期版本拒绝', () => {
     const g = game();
@@ -259,6 +288,34 @@ describe('死亡、投票、阵营和复盘', () => {
     g = cmd(g, 'badge');
     expect(g.sheriff).toBeUndefined();
   });
+  it('法官可一次确认多个报名玩家', () => {
+    let g = game();
+    g.phase = 'signup';
+    g = cmd(g, 'confirmSignup', { candidates: ['p2', 'p4'] });
+    expect(g.candidates).toEqual(['p2', 'p4']);
+    expect(g.speech).toEqual(['p2', 'p4']);
+    expect(g.phase).toBe('campaign');
+  });
+  it('确认退水后跳过无竞争投票或让警徽流失', () => {
+    let sole = game();
+    sole.phase = 'signup';
+    sole = cmd(sole, 'confirmSignup', { candidates: ['p0', 'p1'] });
+    sole = cmd(sole, 'withdraw', { actor: 'p1' });
+    sole = cmd(sole, 'confirmWithdraw');
+    expect(sole.sheriff).toBe('p0');
+    expect(sole.phase).toBe('announce');
+
+    let none = game();
+    none.phase = 'signup';
+    none = cmd(none, 'confirmSignup', { candidates: ['p0', 'p1'] });
+    none = cmd(none, 'withdraw', { actor: 'p0' });
+    none = cmd(none, 'withdraw', { actor: 'p1' });
+    none = cmd(none, 'confirmWithdraw');
+    expect(none.sheriff).toBeUndefined();
+    expect(none.electionDone).toBe(true);
+    expect(none.phase).toBe('announce');
+    expect(none.events.at(-1)?.publicText).toContain('警徽流失');
+  });
   it('临时举手不判死', () => {
     let g = game();
     g.phase = 'speech';
@@ -313,5 +370,31 @@ describe('死亡、投票、阵营和复盘', () => {
     g = cmd(g, 'end', { confirm: true });
     expect(g.phase).toBe('ended');
     expect(exportReplay(g, { judge: true }, 'judge')).toHaveProperty('deaths');
+  });
+  it('法官可结束卡在投票、技能或死亡连锁中的本局', () => {
+    let g = game();
+    g.phase = 'speech';
+    g = cmd(g, 'openBallot', { kind: 'single', title: '测试表决' });
+    g.interrupt = {
+      actor: 'p7',
+      kind: 'whiteWolf',
+      phase: 'speech',
+      targetTimer: {
+        started: 1000,
+        deadline: 31000,
+        remaining: 30000,
+        paused: false,
+        duration: 30000,
+      },
+      speechIndex: 0,
+    };
+    g.deathQueue = ['pending-death'];
+    g.pendingDeath = { actor: 'p0', target: 'p1' };
+    g = cmd(g, 'end', { confirm: true });
+    expect(g.phase).toBe('ended');
+    expect(g.ballot).toBeUndefined();
+    expect(g.interrupt).toBeUndefined();
+    expect(g.deathQueue).toEqual([]);
+    expect(g.pendingDeath).toBeUndefined();
   });
 });

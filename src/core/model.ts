@@ -80,6 +80,12 @@ export const defaultRules: Rules = {
   cityTargets: ['good'],
   thirdParties: [],
 };
+export function factionLabel(faction: string, rules?: Pick<Rules, 'thirdParties'>) {
+  if (faction === 'wolves') return '狼人阵营';
+  if (faction === 'good') return '好人阵营';
+  const configured = rules?.thirdParties.find((item) => item.id === faction);
+  return configured?.label ? `${configured.label}（第三方阵营）` : '第三方阵营';
+}
 export interface Timer {
   started: number;
   deadline: number | null;

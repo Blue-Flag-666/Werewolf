@@ -7,6 +7,7 @@ import {
   type Ballot,
   type Role,
   ROLES,
+  factionLabel,
   remaining,
 } from './core/model';
 import { useNow } from './storage';
@@ -37,7 +38,7 @@ export type GameView = Omit<Partial<Game>, 'players' | 'events' | 'interrupt'> &
   nightActor?: string;
   pending?: Action;
   victim?: string;
-  wolves?: { id: string; seat: number; role: Role; alive: boolean }[];
+  wolves?: { id: string; seat: number; name: string; role: Role; alive: boolean }[];
   wolfVotes?: Record<string, string | null>;
   deathActor?: string;
   interrupt?: { actor: string; kind: string; targetTimer: Timer };
@@ -88,7 +89,9 @@ export function Table({
     [direction, setDirection] = useState(1),
     [deathId, setDeathId] = useState(''),
     [cause, setCause] = useState(''),
-    [manualWinners, setManualWinners] = useState('');
+    [manualWinners, setManualWinners] = useState<string[]>([]),
+    [signupSelection, setSignupSelection] = useState<string[]>([]),
+    [judgeTool, setJudgeTool] = useState<'player' | 'ballot' | 'winner'>('player');
   const seat = (id?: string) => g.players.find((p) => p.id === id)?.seat ?? '—';
   const current = g.night?.order[g.night.index] ?? g.nightActor;
   const roleActor = judge
@@ -100,6 +103,29 @@ export function Table({
   const own = judge ? g.players.find((p) => p.id === roleActor) : g.own;
   const nightOpen = judge ? g.phase === 'night' && !g.night?.awaitingNext : g.canNight;
   const pending = g.night?.pending ?? g.pending;
+  const wolfVotes = g.night?.wolfVotes ?? g.wolfVotes ?? {};
+  const wolfMembers =
+    current === 'wolves'
+      ? judge
+        ? g.players
+            .filter((p) => p.faction === 'wolves' && p.alive)
+            .map((p) => ({ id: p.id, seat: p.seat, name: p.name }))
+        : (g.wolves ?? [])
+            .filter((p) => p.alive)
+            .map((p) => ({ id: p.id, seat: p.seat, name: p.name }))
+      : [];
+  const wolvesSubmitted =
+    wolfMembers.length > 0 && wolfMembers.every((p) => Object.hasOwn(wolfVotes, p.id));
+  const wolfChoices = wolfMembers.map((p) => wolfVotes[p.id]);
+  const wolvesAgreed = wolvesSubmitted && wolfChoices.every((choice) => choice === wolfChoices[0]);
+  const describeAction = (action: Action) => {
+    if (action.pass) return '不发动';
+    const parts: string[] = [];
+    if (action.target) parts.push(`选择 ${seat(action.target)} 号`);
+    if (action.save) parts.push('使用解药');
+    if (action.poison) parts.push(`毒药选择 ${seat(action.poison)} 号`);
+    return parts.join('，') || '已提交操作';
+  };
   const t = g.interrupt?.targetTimer ?? g.ballot?.timer ?? g.timer;
   const deadline = t ? remaining(t, now) : 0;
   useEffect(() => {
@@ -108,6 +134,11 @@ export function Table({
     setSave(false);
     setActing('');
   }, [g.phase, current, g.interrupt?.actor]);
+  useEffect(() => {
+    if (g.phase === 'signup')
+      setSignupSelection((selected) => [...new Set([...selected, ...(g.candidates ?? [])])]);
+    else setSignupSelection([]);
+  }, [g.phase, (g.candidates ?? []).join('|')]);
   const act = (type: string, data: Record<string, unknown> = {}) => send(type, data);
   const confirm = (type: string, payload: Record<string, unknown>, message: string) => {
     if (window.confirm(message)) act(type, { ...payload, confirm: true, reason });
@@ -122,20 +153,60 @@ export function Table({
       {label}
     </button>
   );
-  const targets = (value: string, onChange: (v: string) => void, includeDead = false) => (
-    <select aria-label="选择目标座位" value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="">不选择 / 不发动</option>
+  const targets = (
+    value: string,
+    onChange: (v: string) => void,
+    includeDead = false,
+    label = '选择操作对象',
+  ) => (
+    <div className="target-picker" role="group" aria-label={label}>
+      <span className="target-label">{label} · 再次点击可取消</span>
       {g.players
         .filter((p) => includeDead || !p.publicDead)
         .map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.seat} 号 · {p.name}
-            {p.publicDead ? '（已公布死亡）' : ''}
-          </option>
+          <button
+            type="button"
+            key={p.id}
+            className={`${value === p.id ? 'selected' : ''} ${p.publicDead ? 'dead' : ''}`}
+            aria-pressed={value === p.id}
+            onClick={() => onChange(value === p.id ? '' : p.id)}
+          >
+            <strong>{p.seat} 号</strong>
+            <small>{p.name}</small>
+          </button>
         ))}
-    </select>
+    </div>
+  );
+  const multipleTargets = (
+    values: string[],
+    onChange: (values: string[]) => void,
+    label: string,
+  ) => (
+    <div className="target-picker" role="group" aria-label={label}>
+      <span className="target-label">{label} · 可选择多人，再次点击可取消</span>
+      {g.players
+        .filter((p) => !p.publicDead)
+        .map((p) => {
+          const selected = values.includes(p.id);
+          return (
+            <button
+              type="button"
+              key={p.id}
+              className={selected ? 'selected' : ''}
+              aria-pressed={selected}
+              onClick={() =>
+                onChange(selected ? values.filter((id) => id !== p.id) : [...values, p.id])
+              }
+            >
+              <strong>{p.seat} 号</strong>
+              <small>{p.name}</small>
+            </button>
+          );
+        })}
+    </div>
   );
   const deathActor = g.deathActor ?? g.deaths?.find((d) => d.id === g.deathQueue?.[0])?.target;
+  const factionOptions = ['good', 'wolves', ...(g.rules?.thirdParties.map((f) => f.id) ?? [])];
   return (
     <div className="game-layout">
       <section className="main-column">
@@ -147,6 +218,17 @@ export function Table({
               </span>
               <h2>{phaseNames[g.phase]}</h2>
             </div>
+            {judge && g.phase !== 'ended' && (
+              <button
+                className="danger"
+                disabled={busy}
+                onClick={() =>
+                  confirm('end', {}, '确认立即结束本局？当前投票、技能和死亡结算将一并终止。')
+                }
+              >
+                结束本局
+              </button>
+            )}
             {t && (
               <div className="clock" aria-live="off">
                 {t.deadline === null && !t.paused ? '不限时' : `${Math.ceil(deadline / 1000)}s`}
@@ -173,7 +255,9 @@ export function Table({
           </p>
           {g.winner && judge && (
             <div className="notice">
-              <strong>胜利建议：{g.winner.factions.join('、')}</strong>
+              <strong>
+                胜利建议：{g.winner.factions.map((f) => factionLabel(f, g.rules)).join('、')}
+              </strong>
               <p>{g.winner.reason}</p>
               <button
                 className="primary"
@@ -186,7 +270,10 @@ export function Table({
           )}
           {g.conclusion && (
             <div className="notice">
-              <strong>{g.conclusion.factions.join('、') || '人工结束'}</strong>
+              <strong>
+                {g.conclusion.factions.map((f) => factionLabel(f, g.rules)).join('、') ||
+                  '人工结束'}
+              </strong>
               <p>{g.conclusion.reason}</p>
             </div>
           )}
@@ -197,7 +284,7 @@ export function Table({
               </strong>
               {(judge || me === g.interrupt.actor) && (
                 <>
-                  {targets(chosen, setChosen)}
+                  {targets(chosen, setChosen, false, '技能目标')}
                   {button(
                     '提交目标并立即结算',
                     'interruptTarget',
@@ -240,21 +327,13 @@ export function Table({
                   <h3>
                     {current === 'wolves' ? '狼人团队刀口' : ROLES[own?.role ?? 'villager']}操作
                   </h3>
-                  {judge && current === 'wolves' && (
-                    <label>
-                      代表狼人
-                      <select value={roleActor} onChange={(e) => setActing(e.target.value)}>
-                        {g.players
-                          .filter((p) => p.faction === 'wolves' && p.alive)
-                          .map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.seat} 号
-                            </option>
-                          ))}
-                      </select>
-                    </label>
-                  )}
-                  {(current === 'wolves' || own?.role !== 'witch') && targets(chosen, setChosen)}
+                  {(current === 'wolves' || own?.role !== 'witch') &&
+                    targets(
+                      chosen,
+                      setChosen,
+                      false,
+                      current === 'wolves' && judge ? '法官最终目标' : '行动目标',
+                    )}
                   {own?.role === 'witch' && current !== 'wolves' && (
                     <>
                       <p>
@@ -269,38 +348,101 @@ export function Table({
                         />
                         使用解药
                       </label>
-                      <label>毒药目标{targets(poison, setPoison)}</label>
+                      {targets(poison, setPoison, false, '毒药目标')}
                     </>
                   )}
-                  <div className="actions">
-                    <button
-                      disabled={busy}
-                      className="primary"
-                      onClick={() =>
-                        act('submitAction', { actor: roleActor, target: chosen, save, poison })
-                      }
-                    >
-                      提交，等待法官
-                    </button>
-                    {button('不发动', 'submitAction', { actor: roleActor, pass: true })}
-                  </div>
-                  {pending && (
+                  {current === 'wolves' && judge ? (
+                    <>
+                      <div className="target-picker" role="group" aria-label="狼人最终操作">
+                        <span className="target-label">最终选择 · 单选，再次点击可取消</span>
+                        <button
+                          type="button"
+                          className={chosen === '__empty_knife__' ? 'selected' : ''}
+                          aria-pressed={chosen === '__empty_knife__'}
+                          onClick={() =>
+                            setChosen(chosen === '__empty_knife__' ? '' : '__empty_knife__')
+                          }
+                        >
+                          <strong>不选</strong>
+                          <small>本夜空刀</small>
+                        </button>
+                      </div>
+                      <div className="actions">
+                        <button
+                          className="primary"
+                          disabled={busy || !chosen}
+                          onClick={() =>
+                            confirm(
+                              'confirmAction',
+                              chosen === '__empty_knife__' ? { pass: true } : { target: chosen },
+                              chosen === '__empty_knife__'
+                                ? '确认狼人本夜不选择目标？'
+                                : `确认狼人最终刀口为 ${seat(chosen)} 号？`,
+                            )
+                          }
+                        >
+                          确认狼人最终操作
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="actions">
+                      <button
+                        disabled={busy}
+                        className="primary"
+                        onClick={() =>
+                          act('submitAction', { actor: roleActor, target: chosen, save, poison })
+                        }
+                      >
+                        {current === 'wolves' ? '确认我的选择' : '提交，等待法官'}
+                      </button>
+                      {button(current === 'wolves' ? '确认空刀' : '不发动', 'submitAction', {
+                        actor: roleActor,
+                        pass: true,
+                      })}
+                    </div>
+                  )}
+                  {pending && current !== 'wolves' && (
                     <p className="notice">
-                      已提交，等待法官确认{judge ? `：${JSON.stringify(pending)}` : ''}
+                      {seat(pending.actor)} 号：{describeAction(pending)} · 等待法官确认
                     </p>
                   )}
-                  {(g.night?.wolfVotes || g.wolfVotes) && (
-                    <p>
-                      团队意向：
-                      {Object.entries(g.night?.wolfVotes ?? g.wolfVotes ?? {})
-                        .map(([id, to]) => `${seat(id)} → ${to ? seat(to) : '空刀'}`)
-                        .join('；')}
-                    </p>
+                  {current === 'wolves' && wolfMembers.length > 0 && (
+                    <div className="notice team-intent">
+                      <strong>狼人团队意向</strong>
+                      <div className="team-choices">
+                        {wolfMembers.map((wolf) => (
+                          <span key={wolf.id}>
+                            {wolf.seat} 号{wolf.name ? ` ${wolf.name}` : ''}：
+                            {Object.hasOwn(wolfVotes, wolf.id)
+                              ? wolfVotes[wolf.id]
+                                ? `${seat(wolfVotes[wolf.id] ?? undefined)} 号`
+                                : '空刀'
+                              : '待确认'}
+                          </span>
+                        ))}
+                      </div>
+                      <small>
+                        {wolvesAgreed ? '全员意见一致，可以确认刀口' : '等待全员提交并统一意见'}
+                      </small>
+                    </div>
                   )}
                   {judge && (
                     <div className="actions">
-                      {button('确认当前行动', 'confirmAction', {}, !pending)}
-                      {button('驳回重选', 'rejectAction', {}, !pending)}
+                      {button(
+                        current === 'wolves' ? '采用团队一致选择' : '确认当前行动',
+                        'confirmAction',
+                        {},
+                        current === 'wolves' ? !wolvesAgreed : !pending,
+                      )}
+                      {button(
+                        current === 'wolves' ? '清空狼人选择' : '驳回重选',
+                        'rejectAction',
+                        {},
+                        current === 'wolves'
+                          ? !Object.keys(wolfVotes).length && !pending
+                          : !pending,
+                      )}
                       {button('跳过当前角色', 'skipRole')}
                     </div>
                   )}
@@ -312,9 +454,10 @@ export function Table({
                   {me && button('举手上警', 'signup')}
                   {judge && (
                     <>
-                      {targets(acting, setActing)}
-                      {button('代为上警', 'signup', { actor: acting })}
-                      {button('确认报名名单', 'confirmSignup')}
+                      {multipleTargets(signupSelection, setSignupSelection, '警长报名名单')}
+                      {button(`确认报名名单（${signupSelection.length} 人）`, 'confirmSignup', {
+                        candidates: signupSelection,
+                      })}
                     </>
                   )}
                 </div>
@@ -324,7 +467,7 @@ export function Table({
                   {me && button('申请退水', 'withdraw')}
                   {judge && (
                     <>
-                      {targets(acting, setActing)}
+                      {targets(acting, setActing, false, '代操作玩家')}
                       {button('代为退水', 'withdraw', { actor: acting })}
                       {button('确认退水', 'confirmWithdraw')}
                       {button('开始警长投票', 'openBallot', { kind: 'sheriff', title: '警长选举' })}
@@ -336,7 +479,7 @@ export function Table({
               {judge && g.phase === 'announce' && button('公布夜间死亡', 'announce')}
               {(judge || me === g.sheriff) && g.phase === 'speech' && (
                 <div className="actions">
-                  {targets(chosen, setChosen, true)}
+                  {targets(chosen, setChosen, true, '发言起点')}
                   <select
                     aria-label="发言方向"
                     value={direction}
@@ -370,7 +513,7 @@ export function Table({
                   {judge && button('开始技能计时', 'beginDeathSkill')}
                   {(judge || me === deathActor) && (
                     <>
-                      {targets(chosen, setChosen)}
+                      {targets(chosen, setChosen, false, '技能目标')}
                       {button('提交目标 / 不发动', 'deathAction', {
                         actor: deathActor,
                         target: chosen,
@@ -391,7 +534,7 @@ export function Table({
               {g.badgePending && (judge || me === g.badgePending) && (
                 <div className="notice">
                   <h3>警徽待处理</h3>
-                  {targets(chosen, setChosen)}
+                  {targets(chosen, setChosen, false, '警徽接收者')}
                   {button('移交警徽 / 不选即撕毁', 'badge', { target: chosen })}
                 </div>
               )}
@@ -404,33 +547,6 @@ export function Table({
                     : '确认进入下一夜',
                   'startNight',
                 )}
-              {['signup', 'campaign', 'sheriffVote', 'announce', 'speech', 'exileVote'].includes(
-                g.phase,
-              ) && (
-                <div className="actions">
-                  {(judge ? g.players : g.players.filter((p) => p.id === me))
-                    .filter((p) => !p.publicDead)
-                    .map((p) => {
-                      const role = judge ? p.role : g.own?.role;
-                      return role && ['wolf', 'wolfKing', 'whiteWolf', 'knight'].includes(role) ? (
-                        <button
-                          className="danger"
-                          disabled={busy}
-                          key={p.id}
-                          onClick={() =>
-                            confirm(
-                              'interrupt',
-                              { actor: p.id },
-                              `${p.seat} 号发动${role === 'knight' ? '决斗' : '自爆'}？发动即打断当前流程，不能撤回。`,
-                            )
-                          }
-                        >
-                          {p.seat} 号{role === 'knight' ? '决斗' : '自爆'}
-                        </button>
-                      ) : null;
-                    })}
-                </div>
-              )}
             </>
           )}
           {judge && t && deadline === 0 && !!t.duration && button('处理本阶段超时', 'timeout')}
@@ -464,7 +580,7 @@ export function Table({
                 : `已投 ${'submitted' in g.ballot ? g.ballot.submitted : Object.keys(g.ballot.votes).length} / ${g.ballot.voters.length}，等待法官确认`}{' '}
               · {g.ballot.anonymous ? '匿名' : '公开票型'}
             </p>
-            {judge && <label>代投选民{targets(acting, setActing)}</label>}
+            {judge && targets(acting, setActing, false, '代投玩家')}
             <div className="actions">
               {g.ballot.candidates.map((id) => (
                 <button
@@ -507,183 +623,239 @@ export function Table({
         )}
         {judge && (
           <details className="panel">
-            <summary>法官工具 · 临时表决与人工裁定</summary>
-            <fieldset disabled={!!g.interrupt || busy}>
-              <legend>临时表决</legend>
-              <div className="fields">
-                <label>
-                  标题
-                  <input value={title} onChange={(e) => setTitle(e.target.value)} />
-                </label>
-                <label>
-                  类型
-                  <select value={ballotKind} onChange={(e) => setBallotKind(e.target.value)}>
-                    <option value="single">单选</option>
-                    <option value="yesno">赞成 / 反对</option>
-                    <option value="hands">举手</option>
-                  </select>
-                </label>
-              </div>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={anonymous}
-                  onChange={(e) => setAnonymous(e.target.checked)}
-                />
-                匿名票型
-              </label>
-              <details>
-                <summary>指定选民与候选人（不选则全部合法座位）</summary>
-                {g.players
-                  .filter((p) => !p.publicDead)
-                  .map((p) => (
-                    <div className="checks" key={p.id}>
-                      <span>{p.seat} 号</span>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={voters.includes(p.id)}
-                          onChange={(e) =>
-                            setVoters(
-                              e.target.checked
-                                ? [...voters, p.id]
-                                : voters.filter((x) => x !== p.id),
-                            )
-                          }
-                        />
-                        选民
-                      </label>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={candidates.includes(p.id)}
-                          onChange={(e) =>
-                            setCandidates(
-                              e.target.checked
-                                ? [...candidates, p.id]
-                                : candidates.filter((x) => x !== p.id),
-                            )
-                          }
-                        />
-                        候选人
-                      </label>
-                    </div>
-                  ))}
-              </details>
-              {button('发起临时表决', 'openBallot', {
-                kind: ballotKind,
-                title,
-                anonymous,
-                seconds,
-                voters: voters.length ? voters : undefined,
-                candidates: candidates.length ? candidates : undefined,
-              })}
-            </fieldset>
-            <fieldset disabled={!!g.interrupt || busy}>
-              <legend>人工裁定（保留记录）</legend>
-              {targets(chosen, setChosen, true)}
-              <input
-                placeholder="可选裁定原因"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-              />
-              <label>
-                修正的死亡记录
-                <select value={deathId} onChange={(e) => setDeathId(e.target.value)}>
-                  <option value="">选择原始记录</option>
-                  {g.deaths
-                    ?.filter((d) => d.target === chosen)
-                    .map((d) => (
-                      <option key={d.id} value={d.id}>
-                        第 {d.round} 轮 #{d.order} · {d.cause}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label>
-                修正后的死因
-                <input
-                  value={cause}
-                  onChange={(e) => setCause(e.target.value)}
-                  placeholder="保留原记录，附加修正说明"
-                />
-              </label>
+            <summary>法官工具</summary>
+            <p className="muted">仅用于临时表决、人工纠错和特殊胜负裁定。</p>
+            <div className="tool-tabs" role="group" aria-label="法官工具分类">
               <button
-                onClick={() =>
-                  confirm(
-                    'correct',
-                    { target: chosen, deathId, cause },
-                    '确认附加死因修正记录？原始事件不会删除。',
-                  )
-                }
+                className={judgeTool === 'player' ? 'selected' : ''}
+                aria-pressed={judgeTool === 'player'}
+                onClick={() => setJudgeTool('player')}
               >
-                记录死因修正
+                玩家裁定
               </button>
-              <label>
-                人工获胜阵营（逗号分隔，可留空采用建议）
+              <button
+                className={judgeTool === 'ballot' ? 'selected' : ''}
+                aria-pressed={judgeTool === 'ballot'}
+                onClick={() => setJudgeTool('ballot')}
+              >
+                临时表决
+              </button>
+              <button
+                className={judgeTool === 'winner' ? 'selected' : ''}
+                aria-pressed={judgeTool === 'winner'}
+                onClick={() => setJudgeTool('winner')}
+              >
+                胜负裁定
+              </button>
+            </div>
+            {judgeTool === 'player' && (
+              <fieldset disabled={!!g.interrupt || busy}>
+                <legend>选择玩家并执行裁定</legend>
+                {targets(chosen, setChosen, true, '裁定玩家')}
                 <input
-                  value={manualWinners}
-                  onChange={(e) => setManualWinners(e.target.value)}
-                  placeholder="good / wolves / 第三方标识"
+                  placeholder="裁定原因（可选）"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
                 />
-              </label>
-              <div className="actions">
-                {button('安排该玩家遗言', 'lastWords', { target: chosen })}
-                <button
-                  onClick={() =>
-                    confirm('kill', { target: chosen }, '确认判死？可能产生死亡技能连锁。')
-                  }
-                >
-                  判死
-                </button>
-                <button
-                  onClick={() =>
-                    confirm('revive', { target: chosen }, '确认复活？不返还消耗，不恢复警徽。')
-                  }
-                >
-                  复活
-                </button>
-                <button
-                  onClick={() =>
-                    confirm(
-                      'correct',
-                      { target: chosen, publicDead: false },
-                      '修正为尚未公开死亡？原始死亡历史仍保留。',
-                    )
-                  }
-                >
-                  修正公开状态
-                </button>
-                {['good', 'wolves', ...(g.rules?.thirdParties.map((f) => f.id) ?? [])].map((f) => (
+                <div className="actions">
+                  {button('安排遗言', 'lastWords', { target: chosen }, !chosen)}
                   <button
-                    key={f}
+                    disabled={!chosen}
+                    onClick={() =>
+                      confirm('kill', { target: chosen }, '确认判死？可能产生死亡技能连锁。')
+                    }
+                  >
+                    判死
+                  </button>
+                  <button
+                    disabled={!chosen}
+                    onClick={() =>
+                      confirm('revive', { target: chosen }, '确认复活？不返还消耗，不恢复警徽。')
+                    }
+                  >
+                    复活
+                  </button>
+                  <button
+                    disabled={!chosen}
                     onClick={() =>
                       confirm(
-                        'faction',
-                        { target: chosen, faction: f },
-                        `确认将该玩家阵营改为 ${f}？`,
+                        'correct',
+                        { target: chosen, publicDead: false },
+                        '修正为尚未公开死亡？原始死亡历史仍保留。',
                       )
                     }
                   >
-                    转为 {f}
+                    撤销公开死亡
                   </button>
-                ))}
+                </div>
+                <div className="tool-section">
+                  <strong>调整阵营</strong>
+                  <div className="actions">
+                    {factionOptions.map((f) => (
+                      <button
+                        key={f}
+                        disabled={!chosen}
+                        onClick={() =>
+                          confirm(
+                            'faction',
+                            { target: chosen, faction: f },
+                            `确认将该玩家转为${factionLabel(f, g.rules)}？`,
+                          )
+                        }
+                      >
+                        {factionLabel(f, g.rules)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <details>
+                  <summary>修正死亡记录</summary>
+                  <label>
+                    原始记录
+                    <select value={deathId} onChange={(e) => setDeathId(e.target.value)}>
+                      <option value="">选择记录</option>
+                      {g.deaths
+                        ?.filter((d) => d.target === chosen)
+                        .map((d) => (
+                          <option key={d.id} value={d.id}>
+                            第 {d.round} 轮 #{d.order} · {d.cause}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <label>
+                    修正后的死因
+                    <input
+                      value={cause}
+                      onChange={(e) => setCause(e.target.value)}
+                      placeholder="保留原记录，附加修正说明"
+                    />
+                  </label>
+                  <button
+                    disabled={!chosen || !deathId}
+                    onClick={() =>
+                      confirm(
+                        'correct',
+                        { target: chosen, deathId, cause },
+                        '确认附加死因修正记录？原始事件不会删除。',
+                      )
+                    }
+                  >
+                    保存修正记录
+                  </button>
+                </details>
+              </fieldset>
+            )}
+            {judgeTool === 'ballot' && (
+              <fieldset disabled={!!g.interrupt || busy}>
+                <legend>临时表决</legend>
+                <div className="fields">
+                  <label>
+                    标题
+                    <input value={title} onChange={(e) => setTitle(e.target.value)} />
+                  </label>
+                  <label>
+                    类型
+                    <select value={ballotKind} onChange={(e) => setBallotKind(e.target.value)}>
+                      <option value="single">单选</option>
+                      <option value="yesno">赞成 / 反对</option>
+                      <option value="hands">举手</option>
+                    </select>
+                  </label>
+                </div>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={anonymous}
+                    onChange={(e) => setAnonymous(e.target.checked)}
+                  />
+                  匿名票型
+                </label>
+                <details>
+                  <summary>指定选民与候选人</summary>
+                  <p className="muted">不选择时使用当前全部合法座位。</p>
+                  {g.players
+                    .filter((p) => !p.publicDead)
+                    .map((p) => (
+                      <div className="checks" key={p.id}>
+                        <span>{p.seat} 号</span>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={voters.includes(p.id)}
+                            onChange={(e) =>
+                              setVoters(
+                                e.target.checked
+                                  ? [...voters, p.id]
+                                  : voters.filter((x) => x !== p.id),
+                              )
+                            }
+                          />
+                          选民
+                        </label>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={candidates.includes(p.id)}
+                            onChange={(e) =>
+                              setCandidates(
+                                e.target.checked
+                                  ? [...candidates, p.id]
+                                  : candidates.filter((x) => x !== p.id),
+                              )
+                            }
+                          />
+                          候选人
+                        </label>
+                      </div>
+                    ))}
+                </details>
+                {button('发起临时表决', 'openBallot', {
+                  kind: ballotKind,
+                  title,
+                  anonymous,
+                  seconds,
+                  voters: voters.length ? voters : undefined,
+                  candidates: candidates.length ? candidates : undefined,
+                })}
+              </fieldset>
+            )}
+            {judgeTool === 'winner' && (
+              <fieldset disabled={!!g.interrupt || busy}>
+                <legend>人工指定胜方</legend>
+                <p className="muted">不选择阵营时，优先采用系统当前的胜利建议。</p>
+                <div className="winner-options">
+                  {factionOptions.map((f) => (
+                    <label className="check" key={f}>
+                      <input
+                        type="checkbox"
+                        checked={manualWinners.includes(f)}
+                        onChange={(e) =>
+                          setManualWinners(
+                            e.target.checked
+                              ? [...manualWinners, f]
+                              : manualWinners.filter((item) => item !== f),
+                          )
+                        }
+                      />
+                      {factionLabel(f, g.rules)}
+                    </label>
+                  ))}
+                </div>
                 <button
                   className="danger"
                   onClick={() =>
                     confirm(
                       'end',
-                      manualWinners
-                        ? { factions: manualWinners.split(',').map((s) => s.trim()) }
-                        : {},
-                      '确认人工结束本局？',
+                      manualWinners.length ? { factions: manualWinners } : {},
+                      '确认按当前胜负裁定结束本局？',
                     )
                   }
                 >
-                  人工结束
+                  确认胜负并结束
                 </button>
-              </div>
-            </fieldset>
+              </fieldset>
+            )}
           </details>
         )}
       </section>
@@ -691,33 +863,61 @@ export function Table({
         <section className="panel">
           <h2>座位与状态</h2>
           <div className="seats">
-            {g.players.map((p) => (
-              <article
-                key={p.id}
-                className={`seat ${p.publicDead ? 'dead' : ''} ${p.id === me ? 'mine' : ''}`}
-              >
-                <span className="seat-number">{p.seat}</span>
-                <strong>{p.name}</strong>
-                <small>
-                  {p.publicDead ? '已公布死亡' : '在场'}
-                  {judge && p.alive === false && !p.publicDead ? ' · 隐藏死亡' : ''}
-                  {g.sheriff === p.id ? ' · 警长' : ''}
-                </small>
-                {p.role && (
-                  <span>
-                    {ROLES[p.role]}
-                    {judge ? ` · ${p.faction}` : ''}
-                  </span>
-                )}
-              </article>
-            ))}
+            {g.players.map((p) => {
+              const role = p.role ?? (p.id === me ? g.own?.role : undefined);
+              const canInterrupt =
+                !g.interrupt &&
+                ['signup', 'campaign', 'sheriffVote', 'announce', 'speech', 'exileVote'].includes(
+                  g.phase,
+                ) &&
+                !p.publicDead &&
+                (judge || p.id === me) &&
+                !!role &&
+                ['wolf', 'wolfKing', 'whiteWolf', 'knight'].includes(role) &&
+                (p.alive !== false || ['whiteWolf', 'knight'].includes(role));
+              return (
+                <article
+                  key={p.id}
+                  className={`seat ${p.publicDead ? 'dead' : ''} ${p.id === me ? 'mine' : ''}`}
+                >
+                  <span className="seat-number">{p.seat}</span>
+                  <strong>{p.name}</strong>
+                  <small>
+                    {p.publicDead ? '已公布死亡' : '在场'}
+                    {judge && p.alive === false && !p.publicDead ? ' · 隐藏死亡' : ''}
+                    {g.sheriff === p.id ? ' · 警长' : ''}
+                  </small>
+                  {p.role && (
+                    <span>
+                      {ROLES[p.role]}
+                      {judge && p.faction ? ` · ${factionLabel(p.faction, g.rules)}` : ''}
+                    </span>
+                  )}
+                  {canInterrupt && (
+                    <button
+                      className="danger seat-skill"
+                      disabled={busy}
+                      onClick={() =>
+                        confirm(
+                          'interrupt',
+                          { actor: p.id },
+                          `${p.seat} 号发动${role === 'knight' ? '决斗' : '自爆'}？发动即打断当前流程，不能撤回。`,
+                        )
+                      }
+                    >
+                      {role === 'knight' ? '发动决斗' : '自爆'}
+                    </button>
+                  )}
+                </article>
+              );
+            })}
           </div>
         </section>
         {g.own && (
           <section className="panel">
             <h2>我的身份</h2>
             <strong>{ROLES[g.own.role]}</strong>
-            <p>当前阵营：{g.own.faction}</p>
+            <p>当前阵营：{factionLabel(g.own.faction, g.rules)}</p>
             {g.own.checks.map((c) => (
               <p key={c.event}>
                 第 {c.round} 夜 · {seat(c.target)} 号：{c.result}
@@ -732,15 +932,12 @@ export function Table({
               .slice()
               .reverse()
               .map((e) => (
-                <details key={e.seq}>
-                  <summary>
-                    <small>
-                      #{e.seq} · 第 {e.round} 轮
-                    </small>
-                    <p>{e.text ?? e.publicText ?? e.judgeText}</p>
-                  </summary>
-                  <pre>{JSON.stringify(e.data, null, 2)}</pre>
-                </details>
+                <article className="event-item" key={e.seq}>
+                  <small>
+                    #{e.seq} · 第 {e.round} 轮
+                  </small>
+                  <p>{e.text ?? e.publicText ?? e.judgeText}</p>
+                </article>
               ))}
           </div>
         </section>

@@ -29,6 +29,27 @@ function target(g: Game, id: string | undefined) {
   assert(p.alive, '目标无行动资格');
   return p;
 }
+function settleUncontestedSheriff(g: Game, now: number) {
+  if (g.candidates.length > 1) return false;
+  g.sheriff = g.candidates[0];
+  g.electionDone = true;
+  g.phase = 'announce';
+  g.speech = [];
+  g.speechIndex = 0;
+  g.withdrawals = [];
+  g.timer = undefined;
+  event(
+    g,
+    now,
+    g.sheriff ? 'sheriffElected' : 'sheriffLost',
+    g.sheriff ? '唯一候选人自动当选' : '警徽流失',
+    { sheriff: g.sheriff },
+    g.sheriff
+      ? `${player(g, g.sheriff).seat} 号成为唯一候选人，自动当选警长`
+      : '所有候选人均已退水，警徽流失',
+  );
+  return true;
+}
 function finishInterrupt(g: Game, now: number, chosen?: string) {
   const i = g.interrupt;
   assert(i, '当前没有中断技能');
@@ -154,12 +175,30 @@ function validateAction(g: Game, a: Action) {
     }
   }
 }
-function confirmAction(g: Game, now: number) {
-  const a = g.night.pending;
+function confirmAction(g: Game, now: number, override?: Action) {
+  const current = g.night.order[g.night.index];
+  let a = override ?? g.night.pending;
+  if (current === 'wolves' && !a) {
+    const wolves = g.players.filter((p) => p.alive && p.faction === 'wolves');
+    assert(wolves.length, '没有可行动的狼人');
+    assert(
+      wolves.every((p) => Object.hasOwn(g.night.wolfVotes, p.id)),
+      '仍有狼人未确认选择',
+    );
+    const choices = wolves.map((p) => g.night.wolfVotes[p.id]);
+    assert(
+      choices.every((choice) => choice === choices[0]),
+      '狼人意见尚未一致',
+    );
+    a = {
+      actor: wolves[0].id,
+      target: choices[0] ?? undefined,
+      pass: choices[0] === null,
+    };
+  }
   assert(a, '没有待确认行动');
   validateAction(g, a);
-  const p = player(g, a.actor),
-    current = g.night.order[g.night.index];
+  const p = player(g, a.actor);
   if (!a.pass) {
     if (current === 'wolves') g.night.knife = a.target;
     else if (p.role === 'guard') {
@@ -219,7 +258,7 @@ export function applyCommand(
   );
   if (g.interrupt)
     assert(
-      ['interruptTarget', 'timer', 'timeout', 'correct'].includes(c.type),
+      ['interruptTarget', 'timer', 'timeout', 'correct', 'end'].includes(c.type),
       '不可中断技能正在选择目标',
     );
   if (g.ballot && !g.interrupt)
@@ -233,6 +272,7 @@ export function applyCommand(
         'timer',
         'timeout',
         'interrupt',
+        'end',
       ].includes(c.type),
       '请先完成或取消当前投票',
     );
@@ -290,16 +330,38 @@ export function applyCommand(
     case 'confirmAction':
       judge();
       assert(g.phase === 'night' && !g.night.awaitingNext, '当前不能确认');
-      confirmAction(g, now);
+      {
+        const current = g.night.order[g.night.index];
+        let override: Action | undefined;
+        if (current === 'wolves' && (text(d.target) || d.pass === true)) {
+          const wolf = g.players.find((p) => p.alive && p.faction === 'wolves');
+          assert(wolf, '没有可行动的狼人');
+          override = {
+            actor: wolf.id,
+            target: text(d.target) || undefined,
+            pass: d.pass === true,
+          };
+        }
+        confirmAction(g, now, override);
+      }
       break;
     case 'rejectAction':
       judge();
       assert(g.phase === 'night', '非夜间阶段');
-      assert(g.night.pending, '没有待驳回行动');
-      event(g, now, 'rejected', '行动被驳回', { action: g.night.pending }, undefined, {
-        [g.night.pending.actor]: '操作被法官驳回，请重新提交',
-      });
-      g.night.pending = undefined;
+      if (g.night.order[g.night.index] === 'wolves') {
+        assert(Object.keys(g.night.wolfVotes).length || g.night.pending, '没有待清空的狼人选择');
+        event(g, now, 'rejected', '法官要求狼人团队重新选择', {
+          votes: g.night.wolfVotes,
+        });
+        g.night.wolfVotes = {};
+        g.night.pending = undefined;
+      } else {
+        assert(g.night.pending, '没有待驳回行动');
+        event(g, now, 'rejected', '行动被驳回', { action: g.night.pending }, undefined, {
+          [g.night.pending.actor]: '操作被法官驳回，请重新提交',
+        });
+        g.night.pending = undefined;
+      }
       g.timer = makeTimer(g.rules.actionSeconds, now);
       break;
     case 'skipRole':
@@ -307,6 +369,7 @@ export function applyCommand(
       assert(g.phase === 'night' && !g.night.awaitingNext, '没有进行中的角色');
       event(g, now, 'skipped', '法官跳过当前角色', { actor: g.night.order[g.night.index] });
       g.night.pending = undefined;
+      g.night.wolfVotes = {};
       g.night.index++;
       g.night.awaitingNext = true;
       g.timer = undefined;
@@ -522,10 +585,14 @@ function applyOther(g: Game, c: Command, who: Actor, now: number) {
     case 'confirmSignup':
       judge();
       assert(g.phase === 'signup', '不在报名阶段');
-      g.phase = 'campaign';
-      g.speech = [...g.candidates];
-      g.speechIndex = 0;
-      g.timer = makeTimer(g.rules.speechSeconds, now);
+      if (Array.isArray(d.candidates)) {
+        const candidates = [...new Set(d.candidates.map(text))];
+        assert(
+          candidates.every((id) => id && !player(g, id).publicDead),
+          '报名名单包含无效玩家',
+        );
+        g.candidates = candidates;
+      }
       event(
         g,
         now,
@@ -534,6 +601,10 @@ function applyOther(g: Game, c: Command, who: Actor, now: number) {
         { candidates: g.candidates },
         `上警名单：${g.candidates.map((id) => player(g, id).seat).join('、') || '无人'}`,
       );
+      g.phase = 'campaign';
+      g.speech = [...g.candidates];
+      g.speechIndex = 0;
+      g.timer = makeTimer(g.rules.speechSeconds, now);
       break;
     case 'withdraw': {
       const p = actor();
@@ -562,6 +633,7 @@ function applyOther(g: Game, c: Command, who: Actor, now: number) {
         `确认退水：${g.withdrawals.map((id) => player(g, id).seat).join('、') || '无人'}`,
       );
       g.withdrawals = [];
+      settleUncontestedSheriff(g, now);
       break;
     case 'openBallot': {
       judge();
@@ -947,7 +1019,6 @@ function applyOther(g: Game, c: Command, who: Actor, now: number) {
     }
     case 'end':
       judge();
-      assert(!g.deathQueue.length && !g.interrupt, '死亡连锁尚未完成');
       assert(d.confirm === true, '请明确确认结束');
       checkVictory(g);
       if (Array.isArray(d.factions))
@@ -964,6 +1035,13 @@ function applyOther(g: Game, c: Command, who: Actor, now: number) {
       };
       g.phase = 'ended';
       g.timer = undefined;
+      g.interrupt = undefined;
+      g.ballot = undefined;
+      g.deathQueue = [];
+      g.deathReturn = undefined;
+      g.pendingDeath = undefined;
+      g.lastWordsReturn = undefined;
+      g.night.pending = undefined;
       event(
         g,
         now,

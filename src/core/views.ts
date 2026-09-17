@@ -122,7 +122,7 @@ export function project(g: Game, view: Actor) {
       canNight && current === 'wolves'
         ? g.players
             .filter((p) => p.faction === 'wolves')
-            .map((p) => ({ id: p.id, seat: p.seat, role: p.role, alive: p.alive }))
+            .map((p) => ({ id: p.id, seat: p.seat, name: p.name, role: p.role, alive: p.alive }))
         : undefined,
     wolfVotes: canNight && current === 'wolves' ? g.night.wolfVotes : undefined,
     victim:
