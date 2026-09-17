@@ -75,6 +75,8 @@ await page.getByRole('button', { name: '结束本局', exact: true }).click();
 await page.getByRole('heading', { name: '本局复盘', exact: true }).waitFor();
 await page.getByRole('button', { name: '返回主页', exact: true }).click();
 await page.getByRole('heading', { name: '复盘记录', exact: true }).waitFor();
+await page.getByRole('button', { name: '◈ 单机法官', exact: true }).waitFor();
+await page.getByRole('button', { name: '进入单机模式 →', exact: true }).waitFor();
 await page.getByRole('button', { name: '查看复盘', exact: true }).click();
 await page.getByRole('heading', { name: '本局复盘', exact: true }).waitFor();
 await page.getByRole('button', { name: '再来一局', exact: true }).click();

@@ -390,16 +390,13 @@ function App() {
                 <button
                   className="primary"
                   onClick={() => {
-                    if (game?.phase === 'ended') void openLocalReplay(game);
-                    else {
-                      setMode('local');
-                      setScreen(game ? 'play' : 'setup');
-                      setShield(true);
-                    }
+                    setMode('local');
+                    setScreen(game && game.phase !== 'ended' ? 'play' : 'setup');
+                    setShield(true);
                   }}
                 >
                   ◈ 单机法官
-                  {game?.phase === 'ended' ? ' · 查看本局复盘' : game ? ' · 恢复本局' : ''}
+                  {game && game.phase !== 'ended' ? ' · 恢复本局' : ''}
                 </button>
                 {session && (
                   <button
@@ -415,9 +412,7 @@ function App() {
             </section>
             <div className="home-grid">
               <section className="panel">
-                <span className="eyebrow">一起入席</span>
                 <h2>多人联机房间</h2>
-                <p className="muted">法官控场，玩家在自己的设备上行动。无需注册。</p>
                 <label>
                   昵称
                   <input
@@ -459,25 +454,16 @@ function App() {
                 </div>
               </section>
               <section className="panel intro">
-                <span className="eyebrow">一台设备，也能开局</span>
-                <h2>专注游戏，不漏流程</h2>
-                <p>单机模式无需创建房间。传递设备时逐一查看身份，夜间由法官统一操作。</p>
-                <ul>
-                  <li>刷新后恢复本局，重新打开先遮挡身份</li>
-                  <li>可配置版型、地方规则与阶段计时</li>
-                  <li>裁定有记录，笔记只保存在本机</li>
-                </ul>
+                <h2>单机法官模式</h2>
+                <p>无需创建房间，由法官统一推进发牌、行动、投票和结算。</p>
                 <button
                   onClick={() => {
-                    if (game?.phase === 'ended') void openLocalReplay(game);
-                    else {
-                      setMode('local');
-                      setScreen(game ? 'play' : 'setup');
-                      setShield(true);
-                    }
+                    setMode('local');
+                    setScreen(game && game.phase !== 'ended' ? 'play' : 'setup');
+                    setShield(true);
                   }}
                 >
-                  {game?.phase === 'ended' ? '查看本局复盘 →' : '进入单机模式 →'}
+                  {game && game.phase !== 'ended' ? '恢复单机本局 →' : '进入单机模式 →'}
                 </button>
               </section>
             </div>
