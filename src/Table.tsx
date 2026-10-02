@@ -118,6 +118,9 @@ export function Table({
     wolfMembers.length > 0 && wolfMembers.every((p) => Object.hasOwn(wolfVotes, p.id));
   const wolfChoices = wolfMembers.map((p) => wolfVotes[p.id]);
   const wolvesAgreed = wolvesSubmitted && wolfChoices.every((choice) => choice === wolfChoices[0]);
+  const wolfVoteState = JSON.stringify(
+    wolfMembers.map((p) => [p.id, Object.hasOwn(wolfVotes, p.id), wolfVotes[p.id]]),
+  );
   const describeAction = (action: Action) => {
     if (action.pass) return '不发动';
     const parts: string[] = [];
@@ -160,6 +163,10 @@ export function Table({
       setSignupSelection((selected) => [...new Set([...selected, ...(g.candidates ?? [])])]);
     else setSignupSelection([]);
   }, [g.phase, (g.candidates ?? []).join('|')]);
+  useEffect(() => {
+    if (judge && current === 'wolves' && nightOpen)
+      setChosen(wolvesAgreed ? (wolfChoices[0] ?? '__empty_knife__') : '');
+  }, [judge, current, nightOpen, wolfVoteState]);
   const act = (type: string, data: Record<string, unknown> = {}) => send(type, data);
   const confirm = (type: string, payload: Record<string, unknown>, message: string) => {
     if (window.confirm(message)) act(type, { ...payload, confirm: true, reason });
@@ -401,12 +408,9 @@ export function Table({
                           className="primary"
                           disabled={busy || !chosen}
                           onClick={() =>
-                            confirm(
+                            act(
                               'confirmAction',
                               chosen === '__empty_knife__' ? { pass: true } : { target: chosen },
-                              chosen === '__empty_knife__'
-                                ? '确认狼人本夜不选择目标？'
-                                : `确认狼人最终刀口为 ${seat(chosen)} 号？`,
                             )
                           }
                         >
@@ -461,7 +465,11 @@ export function Table({
                         ))}
                       </div>
                       <small>
-                        {wolvesAgreed ? '全员意见一致，可以确认刀口' : '等待全员提交并统一意见'}
+                        {wolvesAgreed
+                          ? judge
+                            ? '全员意见一致，已自动选中，等待法官确认'
+                            : '全员意见一致，等待法官确认'
+                          : '等待全员提交并统一意见'}
                       </small>
                     </div>
                   )}

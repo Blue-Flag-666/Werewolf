@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { testWolfConsensus } from './wolves.browser.mjs';
 const browser = await chromium.launch({
   headless: true,
   ...(process.env.BROWSER_CHANNEL ? { channel: process.env.BROWSER_CHANNEL } : {}),
@@ -37,8 +38,14 @@ await actionTarget.click();
 if ((await actionTarget.getAttribute('aria-pressed')) !== 'false')
   throw Error('Action target did not clear on second click');
 await actionTarget.click();
-page.once('dialog', (dialog) => dialog.accept());
+const knifeDialog = (dialog) => {
+  errors.push('狼人最终操作不应弹出确认框');
+  void dialog.dismiss();
+};
+page.on('dialog', knifeDialog);
 await page.getByRole('button', { name: '确认狼人最终操作', exact: true }).click();
+await page.getByRole('button', { name: '确认开始下一角色', exact: true }).waitFor();
+page.off('dialog', knifeDialog);
 await page.getByText('法官工具', { exact: true }).click();
 await page.getByRole('button', { name: '临时表决', exact: true }).click();
 await page.getByRole('button', { name: '发起临时表决', exact: true }).waitFor();
@@ -88,6 +95,7 @@ await page.reload();
 await page.getByRole('button', { name: '◈ 单机法官 · 恢复本局', exact: true }).click();
 await page.getByRole('heading', { name: '身份已遮挡', exact: true }).waitFor();
 if (requests.some((url) => url.includes('/api/'))) throw Error('单机模式调用了多人接口');
+await testWolfConsensus(browser, process.env.TEST_URL || 'http://127.0.0.1:8787');
 await browser.close();
 if (errors.length) throw Error(errors.join('\n'));
 console.log(
