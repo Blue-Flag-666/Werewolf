@@ -103,6 +103,16 @@ export function Table({
     : me;
   const own = judge ? g.players.find((p) => p.id === roleActor) : g.own;
   const nightOpen = judge ? g.phase === 'night' && !g.night?.awaitingNext : g.canNight;
+  const isWitch = current !== 'wolves' && own?.role === 'witch';
+  const witchVictim = judge ? g.night?.knife : g.victim;
+  const saveUnavailable = !own?.medicine?.save
+    ? '解药已用尽'
+    : !witchVictim
+      ? '本夜无刀口，不能使用解药'
+      : witchVictim === own?.id &&
+          !(g.round === 1 ? g.rules?.witchFirstSelf : g.rules?.witchOtherSelf)
+        ? '本夜不允许自救'
+        : '';
   const pending = g.night?.pending ?? g.pending;
   const wolfVotes = g.night?.wolfVotes ?? g.wolfVotes ?? {};
   const wolfMembers =
@@ -187,6 +197,7 @@ export function Table({
     onChange: (v: string) => void,
     includeDead = false,
     label = '选择操作对象',
+    disabled = false,
   ) => (
     <div className="target-picker" role="group" aria-label={label}>
       <span className="target-label">{label} · 再次点击可取消</span>
@@ -195,6 +206,7 @@ export function Table({
         .map((p) => (
           <button
             type="button"
+            disabled={disabled || busy}
             key={p.id}
             className={`${value === p.id ? 'selected' : ''} ${p.publicDead ? 'dead' : ''}`}
             aria-pressed={value === p.id}
@@ -412,11 +424,31 @@ export function Table({
                         <input
                           type="checkbox"
                           checked={save}
-                          onChange={(e) => setSave(e.target.checked)}
+                          disabled={!!saveUnavailable || busy}
+                          onChange={(e) => {
+                            setSave(e.target.checked);
+                            if (e.target.checked && !g.rules?.doubleMedicine) setPoison('');
+                          }}
                         />
                         使用解药
                       </label>
-                      {targets(poison, setPoison, false, '毒药目标')}
+                      {saveUnavailable && <small>{saveUnavailable}</small>}
+                      <p className="muted">
+                        {g.rules?.doubleMedicine
+                          ? '本局允许同夜救人和毒人'
+                          : '本局每夜只能使用一种药，选择另一种会取消原选择'}
+                      </p>
+                      {targets(
+                        poison,
+                        (value) => {
+                          setPoison(value);
+                          if (value && !g.rules?.doubleMedicine) setSave(false);
+                        },
+                        false,
+                        '毒药目标',
+                        !own.medicine?.poison,
+                      )}
+                      {!own.medicine?.poison && <small>毒药已用尽</small>}
                     </>
                   )}
                   {current === 'wolves' && judge ? (
@@ -453,17 +485,26 @@ export function Table({
                   ) : (
                     <div className="actions">
                       <button
-                        disabled={busy || timerExpired}
+                        disabled={busy || timerExpired || (!judge && !!pending)}
                         className="primary"
                         onClick={() =>
-                          act('submitAction', { actor: roleActor, target: chosen, save, poison })
+                          act('submitAction', {
+                            actor: roleActor,
+                            ...(isWitch
+                              ? { save, poison, pass: !save && !poison }
+                              : { target: chosen }),
+                          })
                         }
                       >
                         {current === 'wolves'
                           ? '确认我的选择'
-                          : judge
-                            ? '确认操作'
-                            : '提交，等待法官'}
+                          : isWitch && !save && !poison
+                            ? judge
+                              ? '确认不用药'
+                              : '提交不用药，等待法官'
+                            : judge
+                              ? '确认操作'
+                              : '提交，等待法官'}
                       </button>
                       {button(
                         current === 'wolves' ? '确认空刀' : '不发动',

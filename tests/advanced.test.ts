@@ -24,6 +24,82 @@ function run(g: Game, type: string, payload: Record<string, unknown> = {}, now =
   );
 }
 describe('夜间用药、连锁与恢复', () => {
+  for (const doubleMedicine of [false, true]) {
+    it(`双药${doubleMedicine ? '开启' : '关闭'}时空刀仍可用毒，双药耗尽可不用药`, () => {
+      let g = game();
+      g.phase = 'night';
+      g.round = 1;
+      g.rules.doubleMedicine = doubleMedicine;
+      g.night.order = ['1'];
+      g.night.awaitingNext = false;
+      expect(() => run(g, 'submitAction', { actor: '1', save: true })).toThrow('刀口');
+      g = run(g, 'submitAction', { actor: '1', poison: '4' });
+      expect(g.players[1].medicine).toEqual({ save: 1, poison: 0 });
+      g.night.index = 0;
+      g.night.awaitingNext = false;
+      g.night.knife = '5';
+      g.players[1].medicine.save = 0;
+      expect(() => run(g, 'submitAction', { actor: '1', save: true })).toThrow('解药');
+      expect(() => run(g, 'submitAction', { actor: '1', poison: '4' })).toThrow('毒药已耗尽');
+      g = run(g, 'submitAction', { actor: '1', pass: true });
+      expect(g.players[1].medicine).toEqual({ save: 0, poison: 0 });
+      expect(g.night.awaitingNext).toBe(true);
+    });
+    for (const judge of [false, true]) {
+      for (const action of [
+        { save: true },
+        { poison: '4' },
+        { save: true, poison: '4' },
+        { pass: true },
+      ]) {
+        it(`女巫双药${doubleMedicine ? '开启' : '关闭'}，${judge ? '法官' : '玩家'}提交 ${JSON.stringify(action)}`, () => {
+          let g = game();
+          g.phase = 'night';
+          g.round = 1;
+          g.rules.doubleMedicine = doubleMedicine;
+          g.night.order = ['1'];
+          g.night.awaitingNext = false;
+          g.night.knife = '5';
+          const submit = () =>
+            applyCommand(
+              g,
+              {
+                id: crypto.randomUUID(),
+                version: g.version,
+                type: 'submitAction',
+                payload: { actor: '1', ...action },
+              },
+              { judge, player: '1' },
+              1000,
+            );
+          if ('save' in action && 'poison' in action && !doubleMedicine) {
+            expect(submit).toThrow('双药');
+            expect(g.players[1].medicine).toEqual({ save: 1, poison: 1 });
+            expect(g.night.saves).toEqual([]);
+            expect(g.night.poisons).toEqual([]);
+            return;
+          }
+          g = submit();
+          if (!judge) {
+            expect(g.players[1].medicine).toEqual({ save: 1, poison: 1 });
+            expect(g.night.awaitingNext).toBe(false);
+            g = run(g, 'confirmAction');
+          }
+          expect(g.players[1].medicine).toEqual({
+            save: 'save' in action ? 0 : 1,
+            poison: 'poison' in action ? 0 : 1,
+          });
+          expect(g.night.saves).toEqual('save' in action ? ['5'] : []);
+          expect(g.night.poisons).toEqual('poison' in action ? [{ source: '1', target: '4' }] : []);
+          expect(g.night.awaitingNext).toBe(true);
+          g = run(g, 'nextRole');
+          g = run(g, 'settleNight');
+          expect(g.players[5].alive).toBe('save' in action);
+          expect(g.players[4].alive).toBe(!('poison' in action));
+        });
+      }
+    }
+  }
   it('同守同救配置决定刀伤，毒杀仍独立生效', () => {
     for (const kills of [false, true]) {
       const g = game();

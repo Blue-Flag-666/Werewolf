@@ -1,5 +1,6 @@
 import { chromium } from 'playwright';
 import { testWolfConsensus } from './wolves.browser.mjs';
+import { testWitchMedicine } from './witch.browser.mjs';
 const browser = await chromium.launch({
   headless: true,
   ...(process.env.BROWSER_CHANNEL ? { channel: process.env.BROWSER_CHANNEL } : {}),
@@ -127,6 +128,7 @@ await page.getByRole('button', { name: '◈ 单机法官 · 恢复本局', exact
 await page.getByRole('heading', { name: '身份已遮挡', exact: true }).waitFor();
 if (requests.some((url) => url.includes('/api/'))) throw Error('单机模式调用了多人接口');
 await testWolfConsensus(browser, process.env.TEST_URL || 'http://127.0.0.1:8787');
+await testWitchMedicine(browser, process.env.TEST_URL || 'http://127.0.0.1:8787');
 await browser.close();
 if (errors.length) throw Error(errors.join('\n'));
 console.log(
