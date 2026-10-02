@@ -119,6 +119,36 @@ await speakerPanel.getByText(new RegExp('当前发言：' + replacementSeat + ' 
 await speakerPanel.getByText('向右（座位递减）', { exact: true }).waitFor();
 if (await page.getByRole('group', { name: '正在发言的人', exact: true }).count())
   throw Error('Speech adjustment picker remained visible after confirmation');
+if (await page.getByRole('button', { name: '移交警徽 / 不选即撕毁', exact: true }).count())
+  await page.getByRole('button', { name: '移交警徽 / 不选即撕毁', exact: true }).click();
+await page.getByRole('button', { name: '发起放逐投票', exact: true }).click();
+const votePlayers = page.getByRole('group', { name: '代投玩家', exact: true });
+const voteOptions = page.getByRole('group', { name: '该玩家的投票', exact: true });
+await votePlayers.getByRole('button').first().click();
+const previousTarget = voteOptions.getByRole('button').nth(5);
+await previousTarget.click();
+await page.waitForFunction(() =>
+  document.querySelector('[aria-label="该玩家的投票"] [aria-pressed="true"]'),
+);
+await votePlayers.getByRole('button').nth(1).click();
+if (await voteOptions.locator('[aria-pressed="true"]').count())
+  throw Error('Unsubmitted player inherited another player vote');
+await voteOptions.getByRole('button').first().click();
+await votePlayers.getByRole('button').first().click();
+if ((await previousTarget.getAttribute('aria-pressed')) !== 'true')
+  throw Error('Previous player vote did not reappear after switching back');
+await voteOptions.getByRole('button', { name: '弃票', exact: true }).click();
+await votePlayers.getByRole('button').nth(1).click();
+if ((await voteOptions.getByRole('button').first().getAttribute('aria-pressed')) !== 'true')
+  throw Error('Another player vote changed when the first player abstained');
+await votePlayers.getByRole('button').first().click();
+if (
+  (await voteOptions
+    .getByRole('button', { name: '弃票', exact: true })
+    .getAttribute('aria-pressed')) !== 'true'
+)
+  throw Error('Abstention did not reappear after switching back');
+await page.getByRole('button', { name: '取消未确认投票', exact: true }).click();
 await page.getByText('法官工具', { exact: true }).click();
 await page.getByRole('button', { name: '临时表决', exact: true }).click();
 await page.getByRole('button', { name: '发起临时表决', exact: true }).waitFor();

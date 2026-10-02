@@ -108,6 +108,10 @@ export function Table({
   const speechOrderEvent = [...g.events].reverse().find((event) => event.kind === 'speechOrder');
   const speechScheduled = !!g.speech?.length && speechOrderEvent?.round === g.round;
   const currentSpeaker = g.speech?.[g.speechIndex ?? 0];
+  const voteActor = judge ? acting : me;
+  const hasVote = !!voteActor && !!g.ballot && Object.hasOwn(g.ballot.votes, voteActor);
+  const selectedVote = voteActor ? g.ballot?.votes[voteActor] : undefined;
+  const canVote = !!voteActor && !!g.ballot?.voters.includes(voteActor);
   const current = g.night?.order[g.night.index] ?? g.nightActor;
   const roleActor = judge
     ? acting ||
@@ -873,18 +877,28 @@ export function Table({
               · {g.ballot.anonymous ? '匿名' : '公开票型'}
             </p>
             {judge && targets(acting, setActing, false, '代投玩家')}
-            <div className="actions">
+            <div className="actions" role="group" aria-label="该玩家的投票">
               {g.ballot.candidates.map((id) => (
                 <button
                   key={id}
-                  disabled={busy || g.ballot?.confirmed || timerExpired}
+                  className={hasVote && selectedVote === id ? 'selected' : ''}
+                  aria-pressed={hasVote && selectedVote === id}
+                  disabled={busy || !canVote || g.ballot?.confirmed || timerExpired}
                   onClick={() => act('vote', { actor: acting, target: id })}
                 >
                   {g.players.some((p) => p.id === id) ? `${seat(id)} 号` : id}
                 </button>
               ))}
-              {g.ballot.abstain &&
-                button('弃票', 'vote', { actor: acting }, g.ballot.confirmed || timerExpired)}
+              {g.ballot.abstain && (
+                <button
+                  className={hasVote && selectedVote === null ? 'selected' : ''}
+                  aria-pressed={hasVote && selectedVote === null}
+                  disabled={busy || !canVote || g.ballot.confirmed || timerExpired}
+                  onClick={() => act('vote', { actor: acting })}
+                >
+                  弃票
+                </button>
+              )}
             </div>
             {g.ballot.tally && (
               <p>
