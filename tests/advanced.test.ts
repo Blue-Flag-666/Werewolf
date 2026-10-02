@@ -233,6 +233,33 @@ describe('夜间用药、连锁与恢复', () => {
   });
 });
 
+describe('警长竞选结果展示', () => {
+  for (const hasCandidate of [false, true]) {
+    it(hasCandidate ? '自动当选后所有视角先显示警长结果' : '无人报名后先显示警徽流失', () => {
+      let g = game();
+      g.phase = 'signup';
+      g = run(g, 'confirmSignup', { candidates: hasCandidate ? ['1'] : [] });
+      g = run(g, 'nextSpeaker');
+      expect(g.phase).toBe('announce');
+      for (const view of [{ judge: true }, { judge: false, player: '2' }, { judge: false }]) {
+        const html = renderToStaticMarkup(
+          createElement(Table, {
+            g: project(g, view) as GameView,
+            judge: view.judge,
+            me: view.player,
+            send: () => {},
+            busy: false,
+          }),
+        );
+        expect(html).toContain('警长竞选结果');
+        expect(html).toContain(hasCandidate ? '2 号 1 当选警长' : '无人当选，警徽流失');
+        expect(html).toContain('完成竞选结果展示');
+        expect(html).not.toContain('公布夜间死亡');
+      }
+    });
+  }
+});
+
 describe('预言家查验结果', () => {
   it('确认后法官与预言家可见好坏，其他玩家和观战者不可见', () => {
     let g = game(['wolf', 'seer', 'villager', 'villager']);

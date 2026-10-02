@@ -92,6 +92,11 @@ export function Table({
     [manualWinners, setManualWinners] = useState<string[]>([]),
     [signupSelection, setSignupSelection] = useState<string[]>([]),
     [completedCheck, setCompletedCheck] = useState(''),
+    [completedElection, setCompletedElection] = useState(() =>
+      typeof window === 'undefined'
+        ? ''
+        : sessionStorage.getItem('election-result-viewed:' + g.id) || '',
+    ),
     [judgeTool, setJudgeTool] = useState<'player' | 'ballot' | 'winner'>('player');
   const seat = (id?: string) => g.players.find((p) => p.id === id)?.seat ?? '—';
   const current = g.night?.order[g.night.index] ?? g.nightActor;
@@ -259,6 +264,39 @@ export function Table({
   ).sort((a, b) => b.event - a.event);
   const latestCheck = seerChecks[0];
   const checkKey = latestCheck ? `${g.id}:${latestCheck.event}` : '';
+  const electionResult = [...g.events]
+    .reverse()
+    .find((event) => ['sheriffElected', 'sheriffLost'].includes(event.kind));
+  const electionKey = electionResult ? `${g.id}:${electionResult.seq}` : '';
+  if (
+    electionResult &&
+    electionResult.round === g.round &&
+    g.phase === 'announce' &&
+    !g.interrupt &&
+    completedElection !== electionKey
+  ) {
+    const elected = g.players.find((p) => p.id === electionResult.data.sheriff);
+    return (
+      <section className="panel phase-panel" aria-label="警长竞选结果" aria-live="polite">
+        <span className="eyebrow">警长竞选结束</span>
+        <h2>警长竞选结果</h2>
+        <h3>{elected ? `${elected.seat} 号 ${elected.name} 当选警长` : '无人当选，警徽流失'}</h3>
+        <p className="muted">
+          {judge ? '展示结果后，点击完成进入死亡公布环节。' : '查看结果后，点击完成继续。'}
+        </p>
+        <button
+          className="primary"
+          disabled={busy}
+          onClick={() => {
+            setCompletedElection(electionKey);
+            sessionStorage.setItem('election-result-viewed:' + g.id, electionKey);
+          }}
+        >
+          完成竞选结果展示
+        </button>
+      </section>
+    );
+  }
   if (
     latestCheck &&
     latestCheck.round === g.round &&

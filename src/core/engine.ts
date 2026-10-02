@@ -892,10 +892,10 @@ function applyOther(g: Game, c: Command, who: Actor, now: number) {
       event(
         g,
         now,
-        'noWinner',
-        '法官确认无人当选或无人放逐',
+        g.ballot.kind === 'sheriff' ? 'sheriffLost' : 'noWinner',
+        g.ballot.kind === 'sheriff' ? '无人当选，警徽流失' : '法官确认无人当选或无人放逐',
         { ballot: g.ballot.id },
-        '本轮无人当选或放逐',
+        g.ballot.kind === 'sheriff' ? '无人当选，警徽流失' : '本轮无人当选或放逐',
       );
       g.timer = g.ballot.suspendedTimer;
       if (g.timer && !g.timer.paused && g.timer.duration)

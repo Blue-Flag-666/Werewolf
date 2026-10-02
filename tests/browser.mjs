@@ -78,6 +78,16 @@ if (await page.getByRole('button', { name: '确认开始下一角色', exact: tr
   throw Error('Seer result screen allowed skipping completion');
 await page.getByRole('button', { name: '完成查验', exact: true }).click();
 await page.getByRole('button', { name: '结算夜间效果', exact: true }).waitFor();
+await page.getByRole('button', { name: '结算夜间效果', exact: true }).click();
+await page.getByRole('group', { name: '警长报名名单' }).getByRole('button').first().click();
+await page.getByRole('button', { name: '确认报名名单（1 人）', exact: true }).click();
+await page.getByRole('button', { name: '结束竞选发言', exact: true }).click();
+const electionResult = page.getByRole('region', { name: '警长竞选结果', exact: true });
+await electionResult.getByRole('heading', { name: /当选警长/ }).waitFor();
+if (await page.getByRole('button', { name: '公布夜间死亡', exact: true }).count())
+  throw Error('Sheriff result could be skipped');
+await page.getByRole('button', { name: '完成竞选结果展示', exact: true }).click();
+await page.getByRole('button', { name: '公布夜间死亡', exact: true }).waitFor();
 await page.getByText('法官工具', { exact: true }).click();
 await page.getByRole('button', { name: '临时表决', exact: true }).click();
 await page.getByRole('button', { name: '发起临时表决', exact: true }).waitFor();
