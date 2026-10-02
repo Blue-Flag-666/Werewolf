@@ -50,6 +50,25 @@ function settleUncontestedSheriff(g: Game, now: number) {
   );
   return true;
 }
+function confirmWithdrawals(g: Game, now: number) {
+  const withdrawn = [...g.withdrawals];
+  const current = g.speech[g.speechIndex];
+  const spoken = g.speech.slice(0, g.speechIndex);
+  g.candidates = g.candidates.filter((id) => !withdrawn.includes(id));
+  g.speech = g.speech.filter((id) => !withdrawn.includes(id));
+  g.speechIndex = spoken.filter((id) => !withdrawn.includes(id)).length;
+  if (g.speech[g.speechIndex] !== current)
+    g.timer = g.speechIndex < g.speech.length ? makeTimer(g.rules.speechSeconds, now) : undefined;
+  event(
+    g,
+    now,
+    'withdrawConfirmed',
+    '确认退水',
+    { players: withdrawn },
+    `确认退水：${withdrawn.map((id) => player(g, id).seat).join('、') || '无人'}`,
+  );
+  g.withdrawals = [];
+}
 function finishInterrupt(g: Game, now: number, chosen?: string) {
   const i = g.interrupt;
   assert(i, '当前没有中断技能');
@@ -234,6 +253,37 @@ function confirmAction(g: Game, now: number, override?: Action) {
   g.night.index++;
   g.timer = undefined;
 }
+function resolveDeathAction(g: Game, now: number, a: Action) {
+  assert(g.deathQueue.length, '没有待确认死亡技能');
+  const p = player(g, a.actor),
+    death = g.deaths.find((x) => x.id === g.deathQueue[0]);
+  assert(death?.target === p.id, '死亡技能队列不一致');
+  g.deathQueue.shift();
+  g.pendingDeath = undefined;
+  g.timer = undefined;
+  if (a.target)
+    kill(
+      g,
+      a.target,
+      p.role === 'hunter' ? 'shot' : 'wolfKing',
+      now,
+      p.id,
+      false,
+      undefined,
+      death.id,
+    );
+  else
+    event(
+      g,
+      now,
+      'deathPass',
+      '放弃死亡技能',
+      { actor: p.id, death: death.id },
+      `${p.seat} 号不发动死亡技能`,
+    );
+  if (!g.deathQueue.length) g.phase = g.deathReturn ?? 'awaitNight';
+  checkVictory(g);
+}
 export function applyCommand(
   input: Game,
   c: Command,
@@ -321,8 +371,10 @@ export function applyCommand(
       if (g.night.order[g.night.index] === 'wolves' && !who.judge) {
         g.night.wolfVotes[p.id] = a.target ?? null;
         event(g, now, 'wolfVote', '狼人团队提交目标', { ...a });
+      } else if (who.judge) {
+        confirmAction(g, now, a);
       } else {
-        assert(!g.night.pending || who.judge, '已提交，等待法官');
+        assert(!g.night.pending, '已提交，等待法官');
         g.night.pending = a;
       }
       break;
@@ -446,7 +498,6 @@ export function applyCommand(
         event(g, now, 'actionTimeout', '普通行动超时，等待法官处理', {
           actor: g.night.order[g.night.index],
         });
-        g.timer = undefined;
       } else if (g.phase === 'deathSkill' && expired(g.timer, now) && !g.pendingDeath) {
         const death = g.deaths.find((x) => x.id === g.deathQueue[0]);
         if (death) g.pendingDeath = { actor: death.target, pass: true };
@@ -514,6 +565,10 @@ export function applyCommand(
           ? `${player(g, g.speech[g.speechIndex]).seat} 号发言`
           : '本轮发言结束',
       );
+      if (g.phase === 'campaign' && g.speechIndex >= g.speech.length) {
+        if (g.withdrawals.length) confirmWithdrawals(g, now);
+        settleUncontestedSheriff(g, now);
+      }
       if (g.phase === 'lastWords' && g.speechIndex >= g.speech.length) {
         g.phase = g.lastWordsReturn ?? 'speech';
         g.speech = [];
@@ -564,8 +619,8 @@ function applyOther(g: Game, c: Command, who: Actor, now: number) {
       assert(g.phase === 'deathSkill' && g.deathQueue.length, '没有死亡技能');
       {
         const death = g.deaths.find((d) => d.id === g.deathQueue[0])!;
-        g.pendingDeath = { actor: death.target, pass: true };
         event(g, now, 'deathTimeout', '法官登记不发动死亡技能', { actor: death.target });
+        resolveDeathAction(g, now, { actor: death.target, pass: true });
       }
       break;
     case 'signup': {
@@ -623,17 +678,8 @@ function applyOther(g: Game, c: Command, who: Actor, now: number) {
     case 'confirmWithdraw':
       judge();
       assert(g.phase === 'campaign', '不在竞选阶段');
-      g.candidates = g.candidates.filter((id) => !g.withdrawals.includes(id));
-      event(
-        g,
-        now,
-        'withdrawConfirmed',
-        '确认退水',
-        { players: g.withdrawals },
-        `确认退水：${g.withdrawals.map((id) => player(g, id).seat).join('、') || '无人'}`,
-      );
-      g.withdrawals = [];
-      settleUncontestedSheriff(g, now);
+      confirmWithdrawals(g, now);
+      if (g.speechIndex >= g.speech.length) settleUncontestedSheriff(g, now);
       break;
     case 'openBallot': {
       judge();
@@ -647,6 +693,11 @@ function applyOther(g: Game, c: Command, who: Actor, now: number) {
       assert(['exile', 'sheriff', 'single', 'yesno', 'hands'].includes(kind), '投票类型无效');
       assert(kind !== 'exile' || g.phase === 'speech', '放逐须在白天发言后');
       assert(kind !== 'sheriff' || g.phase === 'campaign', '警长投票须先确认报名');
+      if (kind === 'sheriff') {
+        assert(g.speechIndex >= g.speech.length, '请先完成竞选发言');
+        if (g.withdrawals.length) confirmWithdrawals(g, now);
+        if (settleUncontestedSheriff(g, now)) break;
+      }
       const eligible = g.players
         .filter(
           (p) =>
@@ -894,41 +945,16 @@ function applyOther(g: Game, c: Command, who: Actor, now: number) {
       if (id) {
         assert(target(g, id).id !== p.id, '不能选择自己');
       }
-      g.pendingDeath = { actor: p.id, target: id || undefined, pass: !id };
+      const action = { actor: p.id, target: id || undefined, pass: !id };
+      if (who.judge) resolveDeathAction(g, now, action);
+      else g.pendingDeath = action;
       break;
     }
     case 'confirmDeath': {
       judge();
       const a = g.pendingDeath;
-      assert(a && g.deathQueue.length, '没有待确认死亡技能');
-      const p = player(g, a.actor),
-        death = g.deaths.find((x) => x.id === g.deathQueue[0]);
-      assert(death?.target === p.id, '死亡技能队列不一致');
-      g.deathQueue.shift();
-      g.pendingDeath = undefined;
-      g.timer = undefined;
-      if (a.target)
-        kill(
-          g,
-          a.target,
-          p.role === 'hunter' ? 'shot' : 'wolfKing',
-          now,
-          p.id,
-          false,
-          undefined,
-          death.id,
-        );
-      else
-        event(
-          g,
-          now,
-          'deathPass',
-          '放弃死亡技能',
-          { actor: p.id, death: death.id },
-          `${p.seat} 号不发动死亡技能`,
-        );
-      if (!g.deathQueue.length) g.phase = g.deathReturn ?? 'awaitNight';
-      checkVictory(g);
+      assert(a, '没有待确认死亡技能');
+      resolveDeathAction(g, now, a);
       break;
     }
     case 'kill':

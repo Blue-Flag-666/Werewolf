@@ -47,6 +47,8 @@ pnpm deploy
 
 `wrangler.jsonc` 已配置静态资源、SPA 回退、`ROOMS` 绑定及 `v1/new_sqlite_classes: ["Room"]` 迁移。首次部署自动创建 SQLite Durable Object 类；后续不要删除或改写已应用的迁移标签。可修改 Worker 名称，但已运行的房间与原命名空间绑定。
 
+支持任意域名和路由目录：在 Cloudflare 为此 Worker 配置所需路由（如 `example.com/games/wolf*`），访问 `https://example.com/games/wolf/` 即可。无需在源码设置域名或目录；缺少末尾 `/` 会自动跳转并保留邀请参数。前端资源、API、WebSocket、邀请链接和 PWA 缓存都跟随入口目录。静态资源请求先进入 Worker，再由 `ASSETS` 绑定读取，勿关闭 `run_worker_first`。路由要覆盖目录下的全部请求；应用目录内的 `api/`、`assets/` 是保留路径。离线缓存只管理本应用目录，不清理同域其他应用的缓存。
+
 应用运行不需要额外 Secrets、D1、KV 或 R2。CLI 使用登录凭证；自动部署环境可单独配置 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID`，不要写入源码。附带 CI 仅测试，不执行部署。
 
 已按 2026-09-11 官方文档核实：免费计划可用 SQLite Durable Objects；当前包含 100,000 DO 请求/天、13,000 GB-s/天、5,000,000 行读取/天、100,000 行写入/天和总计 5 GB SQLite 存储，超额会失败。并非无限容量，Workers 本身也有独立配额。见 [计费](https://developers.cloudflare.com/durable-objects/platform/pricing/)、[限制](https://developers.cloudflare.com/durable-objects/platform/limits/)、[WebSocket 休眠](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)和[部署按钮](https://developers.cloudflare.com/workers/platform/deploy-buttons/)。

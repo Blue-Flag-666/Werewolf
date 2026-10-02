@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Game } from './core/model';
+import { appPath } from './paths';
 const DB = 'werewolf-local-v1';
 export async function readLocal<T>(key: string): Promise<T | undefined> {
   return new Promise((resolve, reject) => {
@@ -66,7 +67,7 @@ export function useRoom(
     const connect = () => {
       setStatus(attempt ? '正在重连' : '正在连接');
       const ws = new WebSocket(
-        `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/rooms/${session.code}/socket`,
+        `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${appPath(`api/rooms/${session.code}/socket`)}`,
       );
       socket.current = ws;
       ws.onopen = () => {

@@ -128,6 +128,27 @@ export function Table({
   };
   const t = g.interrupt?.targetTimer ?? g.ballot?.timer ?? g.timer;
   const deadline = t ? remaining(t, now) : 0;
+  const timerExpired = !!t && !t.paused && t.deadline !== null && now >= t.deadline;
+  const expiredAction = g.interrupt
+    ? {
+        label:
+          g.interrupt.kind === 'knight'
+            ? '结束决斗目标选择（未选目标）'
+            : '结束自爆目标选择（未选目标）',
+        type: 'timeout',
+        payload: {},
+      }
+    : g.ballot
+      ? !g.ballot.confirmed
+        ? { label: '结束投票并确认结果', type: 'confirmBallot', payload: { close: true } }
+        : undefined
+      : g.phase === 'night' && !g.night?.awaitingNext
+        ? { label: '强制结束当前角色操作', type: 'skipRole', payload: {} }
+        : g.phase === 'deathSkill' && !g.pendingDeath
+          ? { label: '结束死亡技能（不发动）', type: 'skipDeath', payload: {} }
+          : ['campaign', 'speech', 'lastWords'].includes(g.phase)
+            ? { label: '结束当前发言', type: 'nextSpeaker', payload: {} }
+            : undefined;
   useEffect(() => {
     setChosen('');
     setPoison('');
@@ -207,6 +228,15 @@ export function Table({
   );
   const deathActor = g.deathActor ?? g.deaths?.find((d) => d.id === g.deathQueue?.[0])?.target;
   const factionOptions = ['good', 'wolves', ...(g.rules?.thirdParties.map((f) => f.id) ?? [])];
+  const seerChecks = (
+    judge
+      ? g.players
+          .filter((p) => p.role === 'seer')
+          .flatMap((p) => (p.checks ?? []).map((check) => ({ ...check, actor: p.id })))
+      : g.own?.role === 'seer'
+        ? g.own.checks.map((check) => ({ ...check, actor: g.own!.id }))
+        : []
+  ).sort((a, b) => b.event - a.event);
   return (
     <div className="game-layout">
       <section className="main-column">
@@ -294,7 +324,6 @@ export function Table({
                 </>
               )}
               <p>未选目标：白狼王仍结束白天；骑士无效果并恢复流程。</p>
-              {deadline === 0 && !!t?.duration && button('结算目标超时', 'timeout')}
             </div>
           )}
           {!g.interrupt && (
@@ -388,18 +417,27 @@ export function Table({
                   ) : (
                     <div className="actions">
                       <button
-                        disabled={busy}
+                        disabled={busy || timerExpired}
                         className="primary"
                         onClick={() =>
                           act('submitAction', { actor: roleActor, target: chosen, save, poison })
                         }
                       >
-                        {current === 'wolves' ? '确认我的选择' : '提交，等待法官'}
+                        {current === 'wolves'
+                          ? '确认我的选择'
+                          : judge
+                            ? '确认操作'
+                            : '提交，等待法官'}
                       </button>
-                      {button(current === 'wolves' ? '确认空刀' : '不发动', 'submitAction', {
-                        actor: roleActor,
-                        pass: true,
-                      })}
+                      {button(
+                        current === 'wolves' ? '确认空刀' : '不发动',
+                        'submitAction',
+                        {
+                          actor: roleActor,
+                          pass: true,
+                        },
+                        timerExpired,
+                      )}
                     </div>
                   )}
                   {pending && current !== 'wolves' && (
@@ -429,21 +467,23 @@ export function Table({
                   )}
                   {judge && (
                     <div className="actions">
-                      {button(
-                        current === 'wolves' ? '采用团队一致选择' : '确认当前行动',
-                        'confirmAction',
-                        {},
-                        current === 'wolves' ? !wolvesAgreed : !pending,
-                      )}
-                      {button(
-                        current === 'wolves' ? '清空狼人选择' : '驳回重选',
-                        'rejectAction',
-                        {},
-                        current === 'wolves'
-                          ? !Object.keys(wolfVotes).length && !pending
-                          : !pending,
-                      )}
-                      {button('跳过当前角色', 'skipRole')}
+                      {(current === 'wolves' || pending) &&
+                        button(
+                          current === 'wolves' ? '采用团队一致选择' : '确认当前行动',
+                          'confirmAction',
+                          {},
+                          current === 'wolves' ? !wolvesAgreed : !pending,
+                        )}
+                      {(current === 'wolves' || pending) &&
+                        button(
+                          current === 'wolves' ? '清空狼人选择' : '驳回重选',
+                          'rejectAction',
+                          {},
+                          current === 'wolves'
+                            ? !Object.keys(wolfVotes).length && !pending
+                            : !pending,
+                        )}
+                      {!timerExpired && button('跳过当前角色', 'skipRole')}
                     </div>
                   )}
                 </div>
@@ -469,9 +509,22 @@ export function Table({
                     <>
                       {targets(acting, setActing, false, '代操作玩家')}
                       {button('代为退水', 'withdraw', { actor: acting })}
-                      {button('确认退水', 'confirmWithdraw')}
-                      {button('开始警长投票', 'openBallot', { kind: 'sheriff', title: '警长选举' })}
-                      {button('下一位候选人', 'nextSpeaker')}
+                      {g.withdrawals?.length ? button('确认退水', 'confirmWithdraw') : null}
+                      {(g.speechIndex ?? 0) >= (g.speech?.length ?? 0) &&
+                        (g.candidates?.length ?? 0) > 1 &&
+                        button('开始警长投票', 'openBallot', {
+                          kind: 'sheriff',
+                          title: '警长选举',
+                        })}
+                      {!timerExpired &&
+                      ((g.speechIndex ?? 0) < (g.speech?.length ?? 0) || !g.speech?.length)
+                        ? button(
+                            (g.speechIndex ?? 0) + 1 < (g.speech?.length ?? 0)
+                              ? '下一位候选人'
+                              : '结束竞选发言',
+                            'nextSpeaker',
+                          )
+                        : null}
                     </>
                   )}
                 </div>
@@ -492,7 +545,7 @@ export function Table({
                     start: chosen,
                     direction: g.sheriff || chosen ? direction : undefined,
                   })}
-                  {judge && button('下一位发言', 'nextSpeaker')}
+                  {judge && !timerExpired && button('下一位发言', 'nextSpeaker')}
                   {judge &&
                     button('发起放逐投票', 'openBallot', { kind: 'exile', title: '放逐投票' })}
                 </div>
@@ -514,15 +567,16 @@ export function Table({
                   {(judge || me === deathActor) && (
                     <>
                       {targets(chosen, setChosen, false, '技能目标')}
-                      {button('提交目标 / 不发动', 'deathAction', {
-                        actor: deathActor,
-                        target: chosen,
-                      })}
+                      {button(
+                        judge ? '确认操作 / 不发动' : '提交目标 / 不发动',
+                        'deathAction',
+                        { actor: deathActor, target: chosen },
+                        timerExpired,
+                      )}
                     </>
                   )}
-                  {judge && button('确认死亡技能', 'confirmDeath', {}, !g.pendingDeath)}
-                  {judge && button('驳回死亡技能', 'rejectDeath', {}, !g.pendingDeath)}
-                  {judge && button('登记放弃技能', 'skipDeath')}
+                  {judge && g.pendingDeath && button('确认死亡技能', 'confirmDeath')}
+                  {judge && g.pendingDeath && button('驳回死亡技能', 'rejectDeath')}
                   {g.pendingDeath && (
                     <p>
                       待确认：
@@ -538,7 +592,10 @@ export function Table({
                   {button('移交警徽 / 不选即撕毁', 'badge', { target: chosen })}
                 </div>
               )}
-              {judge && g.phase === 'lastWords' && button('结束本位遗言', 'nextSpeaker')}
+              {judge &&
+                g.phase === 'lastWords' &&
+                !timerExpired &&
+                button('结束本位遗言', 'nextSpeaker')}
               {judge &&
                 g.phase === 'awaitNight' &&
                 button(
@@ -549,7 +606,10 @@ export function Table({
                 )}
             </>
           )}
-          {judge && t && deadline === 0 && !!t.duration && button('处理本阶段超时', 'timeout')}
+          {judge &&
+            timerExpired &&
+            expiredAction &&
+            button(expiredAction.label, expiredAction.type, expiredAction.payload)}
           {judge && t && (
             <details>
               <summary>计时控制</summary>
@@ -571,6 +631,17 @@ export function Table({
             </details>
           )}
         </div>
+        {seerChecks.length > 0 && (
+          <section className="panel" aria-label="查验结果" aria-live="polite">
+            <h2>查验结果</h2>
+            {seerChecks.map((check) => (
+              <p key={check.event}>
+                第 {check.round} 夜 · {judge ? `${seat(check.actor)} 号预言家查验 ` : '查验 '}
+                {seat(check.target)} 号：<strong>{check.result}</strong>
+              </p>
+            ))}
+          </section>
+        )}
         {g.ballot && (
           <section className="panel">
             <h2>{g.ballot.title}</h2>
@@ -585,13 +656,14 @@ export function Table({
               {g.ballot.candidates.map((id) => (
                 <button
                   key={id}
-                  disabled={busy || g.ballot?.confirmed}
+                  disabled={busy || g.ballot?.confirmed || timerExpired}
                   onClick={() => act('vote', { actor: acting, target: id })}
                 >
                   {g.players.some((p) => p.id === id) ? `${seat(id)} 号` : id}
                 </button>
               ))}
-              {g.ballot.abstain && button('弃票', 'vote', { actor: acting }, g.ballot.confirmed)}
+              {g.ballot.abstain &&
+                button('弃票', 'vote', { actor: acting }, g.ballot.confirmed || timerExpired)}
             </div>
             {g.ballot.tally && (
               <p>
@@ -607,7 +679,7 @@ export function Table({
               <div className="actions">
                 {!g.ballot.confirmed && (
                   <>
-                    {button('确认票型及结果', 'confirmBallot', { close: true })}
+                    {!timerExpired && button('确认票型及结果', 'confirmBallot', { close: true })}
                     {button('取消未确认投票', 'cancelBallot')}
                   </>
                 )}
@@ -918,11 +990,6 @@ export function Table({
             <h2>我的身份</h2>
             <strong>{ROLES[g.own.role]}</strong>
             <p>当前阵营：{factionLabel(g.own.faction, g.rules)}</p>
-            {g.own.checks.map((c) => (
-              <p key={c.event}>
-                第 {c.round} 夜 · {seat(c.target)} 号：{c.result}
-              </p>
-            ))}
           </section>
         )}
         <section className="panel">

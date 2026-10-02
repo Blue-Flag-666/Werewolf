@@ -1,7 +1,12 @@
-const CACHE = 'werewolf-shell-v1';
+const BASE = new URL(self.registration.scope).pathname;
+const CACHE_PREFIX = 'werewolf-shell-' + encodeURIComponent(BASE) + '-';
+const CACHE = CACHE_PREFIX + 'v2';
+const path = (file) => BASE + file;
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(['/', '/icon.svg', '/manifest.webmanifest'])),
+    caches
+      .open(CACHE)
+      .then((cache) => cache.addAll([BASE, path('icon.svg'), path('manifest.webmanifest')])),
   );
   self.skipWaiting();
 });
@@ -10,7 +15,11 @@ self.addEventListener('activate', (event) => {
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))),
+        Promise.all(
+          keys
+            .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE)
+            .map((key) => caches.delete(key)),
+        ),
       )
       .then(() => self.clients.claim()),
   );
@@ -20,7 +29,8 @@ self.addEventListener('fetch', (event) => {
   if (
     event.request.method !== 'GET' ||
     url.origin !== location.origin ||
-    url.pathname.startsWith('/api/')
+    !url.pathname.startsWith(BASE) ||
+    url.pathname.startsWith(path('api/'))
   )
     return;
   event.respondWith(
@@ -37,7 +47,7 @@ self.addEventListener('fetch', (event) => {
           .match(event.request)
           .then(
             (cached) =>
-              cached || (event.request.mode === 'navigate' ? caches.match('/') : Response.error()),
+              cached || (event.request.mode === 'navigate' ? caches.match(BASE) : Response.error()),
           ),
       ),
   );

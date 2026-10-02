@@ -53,12 +53,33 @@ describe('发牌、权限与确认', () => {
     expect(g.night.awaitingNext).toBe(true);
     expect(() => cmd(g, 'submitAction', { actor: 'p5', target: 'p3' })).toThrow();
     g = cmd(g, 'nextRole');
-    g = cmd(g, 'submitAction', { actor: 'p5', target: 'p3' });
+    g = cmd(g, 'submitAction', { target: 'p3' }, { judge: false, player: 'p5' });
     expect(g.night.guard).toBeUndefined();
     g = cmd(g, 'confirmAction');
     expect(g.night.guard).toBe('p3');
     expect(g.night.awaitingNext).toBe(true);
     expect(() => cmd(g, 'submitAction', { actor: 'p0', target: 'p3' })).toThrow();
+  });
+  it('法官代操作夜间角色时直接结算，不再二次确认', () => {
+    let g = game();
+    for (const p of g.players) g = cmd(g, 'identity', { actor: p.id });
+    g = cmd(g, 'startNight');
+    g = cmd(g, 'nextRole');
+    g = cmd(g, 'submitAction', { actor: 'p5', target: 'p3' });
+    expect(g.night.guard).toBe('p3');
+    expect(g.night.pending).toBeUndefined();
+    expect(g.night.awaitingNext).toBe(true);
+  });
+  it('玩家自行提交死亡技能时仍由法官确认', () => {
+    let g = game();
+    g.phase = 'deathSkill';
+    kill(g, 'p4', 'knife', 1000);
+    g = cmd(g, 'deathAction', { target: 'p3' }, { judge: false, player: 'p4' });
+    expect(g.pendingDeath?.target).toBe('p3');
+    expect(g.players[3].alive).toBe(true);
+    g = cmd(g, 'confirmDeath');
+    expect(g.pendingDeath).toBeUndefined();
+    expect(g.players[3].alive).toBe(false);
   });
   it('狼人分别确认目标，一致后可采用，法官也可直接裁定整体刀口', () => {
     const begin = () => {
@@ -116,6 +137,8 @@ describe('发牌、权限与确认', () => {
     g = cmd(g, 'timeout');
     expect(g.phase).toBe('night');
     expect(g.night.index).toBe(0);
+    expect(g.timer?.deadline).toBe(1);
+    expect(() => cmd(g, 'submitAction', { actor: 'p1', target: 'p0' })).toThrow('截止');
   });
 });
 describe('两段式中断与隐藏死亡', () => {
@@ -271,6 +294,9 @@ describe('死亡、投票、阵营和复盘', () => {
     g = cmd(g, 'signup', { actor: 'p0' });
     g = cmd(g, 'signup', { actor: 'p1' });
     g = cmd(g, 'confirmSignup');
+    expect(() => cmd(g, 'openBallot', { kind: 'sheriff' })).toThrow('竞选发言');
+    g = cmd(g, 'nextSpeaker');
+    g = cmd(g, 'nextSpeaker');
     g = cmd(g, 'openBallot', { kind: 'sheriff' });
     g = cmd(g, 'vote', { actor: 'p2', target: 'p0' });
     g = cmd(g, 'vote', { actor: 'p3', target: 'p1' });
@@ -296,14 +322,18 @@ describe('死亡、投票、阵营和复盘', () => {
     expect(g.speech).toEqual(['p2', 'p4']);
     expect(g.phase).toBe('campaign');
   });
-  it('确认退水后跳过无竞争投票或让警徽流失', () => {
+  it('竞选发言结束后仅一人未退水时自动当选，全部退水时警徽流失', () => {
     let sole = game();
     sole.phase = 'signup';
     sole = cmd(sole, 'confirmSignup', { candidates: ['p0', 'p1'] });
     sole = cmd(sole, 'withdraw', { actor: 'p1' });
     sole = cmd(sole, 'confirmWithdraw');
+    expect(sole.phase).toBe('campaign');
+    expect(sole.speech).toEqual(['p0']);
+    sole = cmd(sole, 'nextSpeaker');
     expect(sole.sheriff).toBe('p0');
     expect(sole.phase).toBe('announce');
+    expect(sole.ballot).toBeUndefined();
 
     let none = game();
     none.phase = 'signup';
@@ -314,7 +344,33 @@ describe('死亡、投票、阵营和复盘', () => {
     expect(none.sheriff).toBeUndefined();
     expect(none.electionDone).toBe(true);
     expect(none.phase).toBe('announce');
+    expect(none.ballot).toBeUndefined();
     expect(none.events.at(-1)?.publicText).toContain('警徽流失');
+  });
+  it('发言结束时自动确认待处理退水并跳过无竞争投票', () => {
+    let g = game();
+    g.phase = 'signup';
+    g = cmd(g, 'confirmSignup', { candidates: ['p0', 'p1'] });
+    g = cmd(g, 'nextSpeaker');
+    g = cmd(g, 'withdraw', { actor: 'p1' });
+    g = cmd(g, 'nextSpeaker');
+    expect(g.candidates).toEqual(['p0']);
+    expect(g.sheriff).toBe('p0');
+    expect(g.phase).toBe('announce');
+    expect(g.ballot).toBeUndefined();
+
+    let all = game();
+    all.phase = 'signup';
+    all = cmd(all, 'confirmSignup', { candidates: ['p0', 'p1'] });
+    all = cmd(all, 'withdraw', { actor: 'p0' });
+    all = cmd(all, 'withdraw', { actor: 'p1' });
+    all = cmd(all, 'nextSpeaker');
+    all = cmd(all, 'nextSpeaker');
+    expect(all.candidates).toEqual([]);
+    expect(all.sheriff).toBeUndefined();
+    expect(all.electionDone).toBe(true);
+    expect(all.phase).toBe('announce');
+    expect(all.ballot).toBeUndefined();
   });
   it('临时举手不判死', () => {
     let g = game();
@@ -358,7 +414,6 @@ describe('死亡、投票、阵营和复盘', () => {
     g = cmd(g, 'startNight');
     g = cmd(g, 'nextRole');
     g = cmd(g, 'submitAction', { actor: 'p0', pass: true });
-    g = cmd(g, 'confirmAction');
     g = cmd(g, 'nextRole');
     g = cmd(g, 'settleNight');
     g = cmd(g, 'announce');

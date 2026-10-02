@@ -7,6 +7,7 @@ await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve));
 const port = probe.address().port;
 await new Promise((resolve) => probe.close(resolve));
 const base = 'http://127.0.0.1:' + port;
+const appBase = base + '/games/wolf';
 const sessionFile = '.wrangler/test-reconnect.json';
 let server;
 async function start() {
@@ -45,6 +46,25 @@ async function stop() {
 }
 try {
   await start();
+  for (const mount of ['', '/werewolf', '/games/wolf']) {
+    const response = await fetch(base + mount + '/');
+    const html = await response.text();
+    if (!response.ok || !html.includes('id="root"')) throw Error('App entry failed: ' + mount);
+    const assets = [...html.matchAll(/(?:src|href)="(\.\/[^"\s]+)"/g)].map((match) => match[1]);
+    if (!assets.some((asset) => asset.endsWith('.js'))) throw Error('Missing built script');
+    for (const asset of [...assets, './sw.js', './icon.svg']) {
+      const resource = await fetch(new URL(asset, base + mount + '/'));
+      if (!resource.ok) throw Error('Mounted asset failed: ' + mount + '/' + asset);
+      if ((resource.headers.get('content-type') || '').includes('text/html'))
+        throw Error('Asset returned the app shell: ' + asset);
+    }
+    const index = await fetch(base + mount + '/index.html?room=ABCDEF', { redirect: 'manual' });
+    if (index.status !== 308 || index.headers.get('location') !== base + mount + '/?room=ABCDEF')
+      throw Error('Index redirect lost mount path or query');
+  }
+  const redirect = await fetch(appBase + '?room=ABCDEF', { redirect: 'manual' });
+  if (redirect.status !== 308 || redirect.headers.get('location') !== appBase + '/?room=ABCDEF')
+    throw Error('Directory redirect lost mount path or query');
   const child = spawn(
     process.execPath,
     [kind === 'browser' ? 'tests/browser.mjs' : 'tests/worker.integration.mjs'],
@@ -52,7 +72,7 @@ try {
       stdio: 'inherit',
       env: {
         ...process.env,
-        TEST_URL: base,
+        TEST_URL: appBase,
         ...(kind === 'integration' ? { TEST_SESSION_FILE: sessionFile } : {}),
       },
     },
@@ -63,7 +83,7 @@ try {
     await stop();
     await start();
     const session = JSON.parse(await readFile(sessionFile, 'utf8'));
-    const response = await fetch(base + '/api/rooms/' + session.code + '/state', {
+    const response = await fetch(appBase + '/api/rooms/' + session.code + '/state', {
       headers: { Authorization: 'Bearer ' + session.token },
     });
     const state = await response.json();

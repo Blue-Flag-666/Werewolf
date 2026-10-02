@@ -394,7 +394,28 @@ export class Room extends DurableObject<Env> {
 export default {
   async fetch(req: Request, env: Env) {
     const url = new URL(req.url);
-    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(req);
+    // Routes retain their prefix. Normalize only when fetching our own assets/API.
+    const apiOffset = url.pathname.lastIndexOf('/api/');
+    if (apiOffset >= 0) {
+      url.pathname = url.pathname.slice(apiOffset);
+      req = new Request(url, req);
+    } else {
+      const assetOffset = url.pathname.lastIndexOf('/assets/');
+      const file = url.pathname.split('/').at(-1);
+      if (file === 'index.html') {
+        url.pathname = url.pathname.slice(0, -'index.html'.length);
+        return Response.redirect(url.toString(), 308);
+      }
+      if (assetOffset >= 0) url.pathname = url.pathname.slice(assetOffset);
+      else if (['sw.js', 'icon.svg', 'manifest.webmanifest'].includes(file ?? ''))
+        url.pathname = '/' + file;
+      else if (url.pathname.endsWith('/')) url.pathname = '/';
+      else if (!file?.includes('.')) {
+        url.pathname += '/';
+        return Response.redirect(url.toString(), 308);
+      } else return new Response('Not found', { status: 404 });
+      return env.ASSETS.fetch(new Request(url, req));
+    }
     try {
       assert(
         !req.headers.get('Origin') || req.headers.get('Origin') === url.origin,

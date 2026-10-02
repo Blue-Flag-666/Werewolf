@@ -9,6 +9,7 @@ import { applyCommand } from './core/engine';
 import { exportReplay } from './core/views';
 import { readLocal, writeLocal, compatible, download, useRoom, type Session } from './storage';
 import './style.css';
+import { appPath } from './paths';
 interface RoomView {
   serverNow: number;
   clockOffset?: number;
@@ -122,7 +123,8 @@ function App() {
       })
       .catch((e) => setError('读取存档失败：' + e.message));
     readLocal<Game[]>('archives').then((a) => setArchives(a ?? []));
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    if ('serviceWorker' in navigator)
+      navigator.serviceWorker.register(appPath('sw.js')).catch(() => {});
   }, []);
   const current = mode === 'local' ? game : room?.game;
   const noteKey = current
@@ -231,7 +233,7 @@ function App() {
     setError('');
     try {
       const res = await fetch(
-        create ? '/api/create' : '/api/rooms/' + code.toUpperCase() + '/join',
+        appPath(create ? 'api/create' : 'api/rooms/' + code.toUpperCase() + '/join'),
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -264,7 +266,7 @@ function App() {
       } else {
         if (!session) return;
         const res = await fetch(
-          '/api/rooms/' +
+          appPath('api/rooms/') +
             session.code +
             '/replay?game=' +
             encodeURIComponent(id) +
@@ -556,7 +558,7 @@ function App() {
               <button
                 onClick={() =>
                   navigator.clipboard
-                    .writeText(location.origin + '/?room=' + room.code)
+                    .writeText(location.origin + appPath('') + '?room=' + room.code)
                     .catch(() => setError('复制失败，请手动复制房间号'))
                 }
               >
