@@ -87,6 +87,7 @@ export function Table({
     [voters, setVoters] = useState<string[]>([]),
     [candidates, setCandidates] = useState<string[]>([]),
     [direction, setDirection] = useState(1),
+    [editingSpeech, setEditingSpeech] = useState(false),
     [deathId, setDeathId] = useState(''),
     [cause, setCause] = useState(''),
     [manualWinners, setManualWinners] = useState<string[]>([]),
@@ -104,6 +105,9 @@ export function Table({
     ),
     [judgeTool, setJudgeTool] = useState<'player' | 'ballot' | 'winner'>('player');
   const seat = (id?: string) => g.players.find((p) => p.id === id)?.seat ?? '—';
+  const speechOrderEvent = [...g.events].reverse().find((event) => event.kind === 'speechOrder');
+  const speechScheduled = !!g.speech?.length && speechOrderEvent?.round === g.round;
+  const currentSpeaker = g.speech?.[g.speechIndex ?? 0];
   const current = g.night?.order[g.night.index] ?? g.nightActor;
   const roleActor = judge
     ? acting ||
@@ -178,6 +182,7 @@ export function Table({
     setPoison('');
     setSave(false);
     setActing('');
+    setEditingSpeech(false);
   }, [g.phase, current, g.interrupt?.actor]);
   useEffect(() => {
     if (g.phase === 'signup')
@@ -691,20 +696,77 @@ export function Table({
               {judge && g.phase === 'announce' && button('公布夜间死亡', 'announce')}
               {(judge || me === g.sheriff) && g.phase === 'speech' && (
                 <div className="actions">
-                  {targets(chosen, setChosen, true, '发言起点')}
-                  <select
-                    aria-label="发言方向"
-                    value={direction}
-                    onChange={(e) => setDirection(Number(e.target.value))}
-                  >
-                    <option value={1}>向左（座位递增）</option>
-                    <option value={-1}>向右（座位递减）</option>
-                  </select>
-                  {button('安排发言', 'startSpeech', {
-                    start: chosen,
-                    direction: g.sheriff || chosen ? direction : undefined,
-                  })}
-                  {judge && !timerExpired && button('下一位发言', 'nextSpeaker')}
+                  {speechScheduled && (
+                    <div className="notice" aria-label="当前发言者" aria-live="polite">
+                      <strong>
+                        {currentSpeaker
+                          ? `当前发言：${seat(currentSpeaker)} 号 ${g.players.find((p) => p.id === currentSpeaker)?.name}`
+                          : '本轮发言已结束'}
+                      </strong>
+                      <p>
+                        {speechOrderEvent?.data.direction === -1
+                          ? '向右（座位递减）'
+                          : '向左（座位递增）'}
+                      </p>
+                    </div>
+                  )}
+                  {(!speechScheduled || (judge && editingSpeech)) && (
+                    <>
+                      {targets(
+                        chosen,
+                        setChosen,
+                        !speechScheduled,
+                        speechScheduled ? '正在发言的人' : '发言起点',
+                      )}
+                      <div className="target-picker" role="group" aria-label="发言方向">
+                        {[1, -1].map((value) => (
+                          <button
+                            key={value}
+                            aria-pressed={direction === value}
+                            className={direction === value ? 'selected' : ''}
+                            disabled={busy}
+                            onClick={() => setDirection(value)}
+                          >
+                            {value === 1 ? '向左（座位递增）' : '向右（座位递减）'}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        disabled={busy || (speechScheduled && !chosen)}
+                        onClick={() => {
+                          act('startSpeech', {
+                            start: chosen,
+                            direction: g.sheriff || chosen ? direction : undefined,
+                          });
+                          setEditingSpeech(false);
+                        }}
+                      >
+                        {speechScheduled ? '确认调整发言' : '安排发言'}
+                      </button>
+                      {speechScheduled && (
+                        <button disabled={busy} onClick={() => setEditingSpeech(false)}>
+                          取消调整
+                        </button>
+                      )}
+                    </>
+                  )}
+                  {judge && speechScheduled && !editingSpeech && (
+                    <button
+                      disabled={busy}
+                      onClick={() => {
+                        setChosen(currentSpeaker ?? '');
+                        setDirection(speechOrderEvent?.data.direction === -1 ? -1 : 1);
+                        setEditingSpeech(true);
+                      }}
+                    >
+                      调整发言人和方向
+                    </button>
+                  )}
+                  {judge &&
+                    speechScheduled &&
+                    currentSpeaker &&
+                    !timerExpired &&
+                    button('下一位发言', 'nextSpeaker')}
                   {judge &&
                     button('发起放逐投票', 'openBallot', { kind: 'exile', title: '放逐投票' })}
                 </div>

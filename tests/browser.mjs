@@ -93,6 +93,32 @@ await page.getByRole('region', { name: '夜间死亡公布结果', exact: true }
 if (await page.getByText('法官工具', { exact: true }).count())
   throw Error('Death announcement did not block the next interface');
 await page.getByRole('button', { name: '确认死亡公布，继续', exact: true }).click();
+if (await page.getByRole('button', { name: '确认操作 / 不发动', exact: true }).count())
+  await page.getByRole('button', { name: '确认操作 / 不发动', exact: true }).click();
+await page.getByRole('button', { name: '安排发言', exact: true }).click();
+const speakerPanel = page.getByLabel('当前发言者', { exact: true });
+await speakerPanel.waitFor();
+if (await page.getByRole('group', { name: '发言起点', exact: true }).count())
+  throw Error('Speech origin picker remained visible after scheduling');
+const firstSpeaker = await speakerPanel.textContent();
+await page.getByRole('button', { name: '下一位发言', exact: true }).click();
+await page.waitForFunction(
+  (previous) => document.querySelector('[aria-label="当前发言者"]').textContent !== previous,
+  firstSpeaker,
+);
+await page.getByRole('button', { name: '调整发言人和方向', exact: true }).click();
+const replacement = page
+  .getByRole('group', { name: '正在发言的人', exact: true })
+  .getByRole('button')
+  .last();
+const replacementSeat = (await replacement.innerText()).match(/^\d+/)[0];
+if ((await replacement.getAttribute('aria-pressed')) !== 'true') await replacement.click();
+await page.getByRole('button', { name: '向右（座位递减）', exact: true }).click();
+await page.getByRole('button', { name: '确认调整发言', exact: true }).click();
+await speakerPanel.getByText(new RegExp('当前发言：' + replacementSeat + ' 号')).waitFor();
+await speakerPanel.getByText('向右（座位递减）', { exact: true }).waitFor();
+if (await page.getByRole('group', { name: '正在发言的人', exact: true }).count())
+  throw Error('Speech adjustment picker remained visible after confirmation');
 await page.getByText('法官工具', { exact: true }).click();
 await page.getByRole('button', { name: '临时表决', exact: true }).click();
 await page.getByRole('button', { name: '发起临时表决', exact: true }).waitFor();

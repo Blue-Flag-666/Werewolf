@@ -396,6 +396,21 @@ describe('死亡、投票、阵营和复盘', () => {
     speechOrder(g, 3000, () => 0);
     expect(g.speech.length).toBe(6);
   });
+  it('法官重新指定当前发言者和方向时跳过死亡玩家并重置计时', () => {
+    let g = game(['wolf', 'villager', 'villager', 'villager']);
+    g.phase = 'speech';
+    g.players[1].publicDead = true;
+    g = cmd(g, 'startSpeech', { start: 'p0', direction: 1 });
+    expect(g.speech).toEqual(['p0', 'p2', 'p3']);
+    g = cmd(g, 'nextSpeaker');
+    g = cmd(g, 'startSpeech', { start: 'p3', direction: -1 }, { judge: true }, 5000);
+    expect(g.speech).toEqual(['p3', 'p2', 'p0']);
+    expect(g.speechIndex).toBe(0);
+    expect(g.timer?.deadline).toBe(5000 + g.rules.speechSeconds * 1000);
+    expect(() => cmd(g, 'startSpeech', { start: 'p0' }, { judge: false, player: 'p2' })).toThrow(
+      '法官或警长',
+    );
+  });
   it('公共/玩家视角不泄漏身份；复盘过去阶段无最终身份倒灌', () => {
     const g = game();
     const p = project(g, { judge: false, player: 'p1' });
