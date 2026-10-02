@@ -24,6 +24,7 @@ export function visibleEvents(g: Game, view: Actor, until = Infinity) {
         withdrawRequested: ['actor'],
         withdrawConfirmed: ['players'],
         sheriffElected: ['sheriff'],
+        announcement: ['players'],
         badge: ['from', 'to'],
         speechOrder: ['origin', 'direction', 'order'],
         nextSpeaker: ['speaker'],

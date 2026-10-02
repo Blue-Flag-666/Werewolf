@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defaultRules, type Game, type Role } from '../src/core/model';
-import { createGame, settleNight, kill } from '../src/core/rules';
+import { createGame, settleNight, kill, announce } from '../src/core/rules';
 import { applyCommand } from '../src/core/engine';
 import { project } from '../src/core/views';
 import { Table, type GameView } from '../src/Table';
@@ -231,6 +231,42 @@ describe('夜间用药、连锁与恢复', () => {
     expect(g.pendingDeath).toBeUndefined();
     expect(g.deathQueue).toHaveLength(0);
   });
+});
+
+describe('死亡公布结果展示', () => {
+  for (const deaths of [[], ['1'], ['1', '5']]) {
+    it(`先展示 ${deaths.length} 名死者，公开界面不泄露死因和身份`, () => {
+      const g = game();
+      g.phase = 'announce';
+      g.round = 1;
+      for (const id of deaths) kill(g, id, 'poison', 500, '1', true);
+      g.nightDeaths = deaths;
+      announce(g, 1000);
+      for (const view of [{ judge: true }, { judge: false, player: '0' }, { judge: false }]) {
+        const projected = project(g, view);
+        const html = renderToStaticMarkup(
+          createElement(Table, {
+            g: projected as GameView,
+            judge: view.judge,
+            me: view.player,
+            send: () => {},
+            busy: false,
+          }),
+        );
+        expect(html).toContain('夜间死亡公布结果');
+        expect(html).toContain('确认死亡公布，继续');
+        expect(html).not.toContain('法官工具');
+        for (const id of deaths) expect(html).toContain(`${g.players[Number(id)].seat} 号 ${id}`);
+        if (!deaths.length) expect(html).toContain('平安夜，无人死亡');
+        expect(html).not.toContain('poison');
+        expect(html).not.toContain('女巫');
+        if (!view.judge)
+          expect(projected.events.find((e) => e.kind === 'announcement')?.data).toEqual({
+            players: deaths,
+          });
+      }
+    });
+  }
 });
 
 describe('警长竞选结果展示', () => {

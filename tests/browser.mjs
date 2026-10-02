@@ -88,6 +88,11 @@ if (await page.getByRole('button', { name: '公布夜间死亡', exact: true }).
   throw Error('Sheriff result could be skipped');
 await page.getByRole('button', { name: '完成竞选结果展示', exact: true }).click();
 await page.getByRole('button', { name: '公布夜间死亡', exact: true }).waitFor();
+await page.getByRole('button', { name: '公布夜间死亡', exact: true }).click();
+await page.getByRole('region', { name: '夜间死亡公布结果', exact: true }).waitFor();
+if (await page.getByText('法官工具', { exact: true }).count())
+  throw Error('Death announcement did not block the next interface');
+await page.getByRole('button', { name: '确认死亡公布，继续', exact: true }).click();
 await page.getByText('法官工具', { exact: true }).click();
 await page.getByRole('button', { name: '临时表决', exact: true }).click();
 await page.getByRole('button', { name: '发起临时表决', exact: true }).waitFor();

@@ -97,6 +97,11 @@ export function Table({
         ? ''
         : sessionStorage.getItem('election-result-viewed:' + g.id) || '',
     ),
+    [completedAnnouncement, setCompletedAnnouncement] = useState(() =>
+      typeof window === 'undefined'
+        ? ''
+        : sessionStorage.getItem('death-result-viewed:' + g.id) || '',
+    ),
     [judgeTool, setJudgeTool] = useState<'player' | 'ballot' | 'winner'>('player');
   const seat = (id?: string) => g.players.find((p) => p.id === id)?.seat ?? '—';
   const current = g.night?.order[g.night.index] ?? g.nightActor;
@@ -268,6 +273,41 @@ export function Table({
     .reverse()
     .find((event) => ['sheriffElected', 'sheriffLost'].includes(event.kind));
   const electionKey = electionResult ? `${g.id}:${electionResult.seq}` : '';
+  const announcement = [...g.events].reverse().find((event) => event.kind === 'announcement');
+  const announcementKey = announcement ? `${g.id}:${announcement.seq}` : '';
+  if (
+    announcement &&
+    announcement.round === g.round &&
+    ['speech', 'deathSkill'].includes(g.phase) &&
+    !g.interrupt &&
+    completedAnnouncement !== announcementKey
+  ) {
+    const dead = Array.isArray(announcement.data.players)
+      ? g.players.filter((p) => (announcement.data.players as unknown[]).includes(p.id))
+      : [];
+    return (
+      <section className="panel phase-panel" aria-label="夜间死亡公布结果" aria-live="polite">
+        <span className="eyebrow">第 {announcement.round} 夜 · 死亡公布</span>
+        <h2>{dead.length ? '昨夜死亡玩家' : '平安夜，无人死亡'}</h2>
+        {dead.map((p) => (
+          <h3 key={p.id}>
+            {p.seat} 号 {p.name}
+          </h3>
+        ))}
+        <p className="muted">确认展示完成后，继续处理死亡技能或白天流程。</p>
+        <button
+          className="primary"
+          disabled={busy}
+          onClick={() => {
+            setCompletedAnnouncement(announcementKey);
+            sessionStorage.setItem('death-result-viewed:' + g.id, announcementKey);
+          }}
+        >
+          确认死亡公布，继续
+        </button>
+      </section>
+    );
+  }
   if (
     electionResult &&
     electionResult.round === g.round &&
