@@ -91,6 +91,7 @@ export function Table({
     [cause, setCause] = useState(''),
     [manualWinners, setManualWinners] = useState<string[]>([]),
     [signupSelection, setSignupSelection] = useState<string[]>([]),
+    [completedCheck, setCompletedCheck] = useState(''),
     [judgeTool, setJudgeTool] = useState<'player' | 'ballot' | 'winner'>('player');
   const seat = (id?: string) => g.players.find((p) => p.id === id)?.seat ?? '—';
   const current = g.night?.order[g.night.index] ?? g.nightActor;
@@ -244,6 +245,37 @@ export function Table({
         ? g.own.checks.map((check) => ({ ...check, actor: g.own!.id }))
         : []
   ).sort((a, b) => b.event - a.event);
+  const latestCheck = seerChecks[0];
+  const checkKey = latestCheck ? `${g.id}:${latestCheck.event}` : '';
+  if (
+    latestCheck &&
+    latestCheck.round === g.round &&
+    g.phase === 'night' &&
+    completedCheck !== checkKey &&
+    (!judge || (g.night?.awaitingNext && g.night.order[g.night.index - 1] === latestCheck.actor))
+  ) {
+    return (
+      <section className="panel phase-panel" aria-label="本次查验结果" aria-live="polite">
+        <span className="eyebrow">第 {latestCheck.round} 夜 · 预言家查验</span>
+        <h2>查验结果</h2>
+        <p>
+          {seat(latestCheck.target)} 号 {g.players.find((p) => p.id === latestCheck.target)?.name}
+        </p>
+        <h3>{latestCheck.result}</h3>
+        <p className="muted">查看结果后，点击完成继续。</p>
+        <button
+          className="primary"
+          disabled={busy}
+          onClick={() => {
+            setCompletedCheck(checkKey);
+            if (judge) act('nextRole');
+          }}
+        >
+          完成查验
+        </button>
+      </section>
+    );
+  }
   return (
     <div className="game-layout">
       <section className="main-column">

@@ -190,9 +190,13 @@ describe('预言家查验结果', () => {
           busy: false,
         }),
       );
-    const result = `${wolf.seat} 号：<strong>狼人</strong>`;
+    const result = '<h3>狼人</h3>';
     expect(render(true)).toContain(result);
     expect(render(false, seer.id)).toContain(result);
+    expect(render(true)).toContain('完成查验');
+    expect(render(false, seer.id)).toContain('完成查验');
+    expect(render(true)).not.toContain('确认开始下一角色');
+    expect(render(true)).not.toContain('法官工具');
     expect(render(false, other.id)).not.toContain('查验结果');
     expect(render(false)).not.toContain('查验结果');
   });

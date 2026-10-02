@@ -46,6 +46,37 @@ page.on('dialog', knifeDialog);
 await page.getByRole('button', { name: '确认狼人最终操作', exact: true }).click();
 await page.getByRole('button', { name: '确认开始下一角色', exact: true }).waitFor();
 page.off('dialog', knifeDialog);
+await page.getByRole('button', { name: '确认开始下一角色', exact: true }).click();
+await page.getByRole('heading', { name: '女巫操作', exact: true }).waitFor();
+await page.getByRole('button', { name: '不发动', exact: true }).click();
+await page.getByRole('button', { name: '确认开始下一角色', exact: true }).click();
+await page.getByRole('heading', { name: '预言家操作', exact: true }).waitFor();
+const checkedSeat = await page.evaluate(
+  () =>
+    new Promise((resolve, reject) => {
+      const open = indexedDB.open('werewolf-local-v1', 1);
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        const request = db.transaction('data').objectStore('data').get('active');
+        request.onsuccess = () =>
+          resolve(request.result.players.find((p) => p.faction === 'wolves').seat);
+        request.onerror = () => reject(request.error);
+        request.transaction.oncomplete = () => db.close();
+      };
+    }),
+);
+await page
+  .getByRole('group', { name: '行动目标', exact: true })
+  .getByRole('button', { name: new RegExp('^' + checkedSeat + ' 号') })
+  .click();
+await page.getByRole('button', { name: '确认操作', exact: true }).click();
+const checkResult = page.getByRole('region', { name: '本次查验结果', exact: true });
+await checkResult.getByRole('heading', { name: '狼人', exact: true }).waitFor();
+if (await page.getByRole('button', { name: '确认开始下一角色', exact: true }).count())
+  throw Error('Seer result screen allowed skipping completion');
+await page.getByRole('button', { name: '完成查验', exact: true }).click();
+await page.getByRole('button', { name: '结算夜间效果', exact: true }).waitFor();
 await page.getByText('法官工具', { exact: true }).click();
 await page.getByRole('button', { name: '临时表决', exact: true }).click();
 await page.getByRole('button', { name: '发起临时表决', exact: true }).waitFor();
